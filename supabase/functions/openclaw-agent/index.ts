@@ -72,27 +72,37 @@ Deno.serve(async (req) => {
     }
 
     const apiKey = Deno.env.get("OPENCLAW_API_KEY");
+    const VPS_BASE = "https://ai.richops.cloud:18789";
     let reply: string;
 
     if (apiKey) {
-      // TODO: Wire up real VPS bridge once endpoint contract is provided.
-      // const VPS_BASE = "https://<your-vps-host>:18789";
-      // const upstream = await fetch(`${VPS_BASE}/agent/command`, {
-      //   method: "POST",
-      //   headers: {
-      //     "Authorization": `Bearer ${apiKey}`,
-      //     "Content-Type": "application/json",
-      //   },
-      //   body: JSON.stringify({
-      //     model: body.model,
-      //     skills: body.skills ?? [],
-      //     command: body.command,
-      //     operator_id: userId,
-      //   }),
-      // });
-      // const data = await upstream.json();
-      // reply = data.reply ?? "(no reply)";
-      reply = stubReply(body);
+      try {
+        const upstream = await fetch(`${VPS_BASE}/agent/command`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: body.model,
+            skills: body.skills ?? [],
+            command: body.command,
+            operator_id: userId,
+          }),
+        });
+
+        if (!upstream.ok) {
+          const errText = await upstream.text();
+          console.error("VPS bridge error", upstream.status, errText);
+          reply = `BRIDGE ERROR :: ${upstream.status} :: ${errText.slice(0, 200)}`;
+        } else {
+          const data = await upstream.json();
+          reply = data.reply ?? data.message ?? "(no reply from VPS)";
+        }
+      } catch (fetchErr) {
+        console.error("VPS bridge fetch failed", fetchErr);
+        reply = `BRIDGE UNREACHABLE :: ${(fetchErr as Error).message}`;
+      }
     } else {
       reply = stubReply(body);
     }
