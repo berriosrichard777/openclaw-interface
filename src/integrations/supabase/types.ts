@@ -14,7 +14,211 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      activity_logs: {
+        Row: {
+          created_at: string
+          id: string
+          level: Database["public"]["Enums"]["log_level"]
+          message: string
+          source: Database["public"]["Enums"]["log_source"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          level?: Database["public"]["Enums"]["log_level"]
+          message: string
+          source: Database["public"]["Enums"]["log_source"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          level?: Database["public"]["Enums"]["log_level"]
+          message?: string
+          source?: Database["public"]["Enums"]["log_source"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+      chat_messages: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          model_slug: string | null
+          role: Database["public"]["Enums"]["message_role"]
+          user_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          model_slug?: string | null
+          role: Database["public"]["Enums"]["message_role"]
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          model_slug?: string | null
+          role?: Database["public"]["Enums"]["message_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+      models: {
+        Row: {
+          context: string
+          created_at: string
+          description: string | null
+          id: string
+          latency: string
+          multimodal: string
+          name: string
+          slug: string
+          sort_order: number
+        }
+        Insert: {
+          context: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          latency: string
+          multimodal: string
+          name: string
+          slug: string
+          sort_order?: number
+        }
+        Update: {
+          context?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          latency?: string
+          multimodal?: string
+          name?: string
+          slug?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
+      operator_settings: {
+        Row: {
+          active_model_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          active_model_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          active_model_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "operator_settings_active_model_id_fkey"
+            columns: ["active_model_id"]
+            isOneToOne: false
+            referencedRelation: "models"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      operator_skills: {
+        Row: {
+          enabled: boolean
+          skill_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          enabled?: boolean
+          skill_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          enabled?: boolean
+          skill_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "operator_skills_skill_id_fkey"
+            columns: ["skill_id"]
+            isOneToOne: false
+            referencedRelation: "skills"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          callsign: string
+          created_at: string
+          display_name: string
+          id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          callsign?: string
+          created_at?: string
+          display_name?: string
+          id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          avatar_url?: string | null
+          callsign?: string
+          created_at?: string
+          display_name?: string
+          id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      skills: {
+        Row: {
+          created_at: string
+          description: string
+          icon: string | null
+          id: string
+          label: string
+          slug: string
+          sort_order: number
+        }
+        Insert: {
+          created_at?: string
+          description: string
+          icon?: string | null
+          id?: string
+          label: string
+          slug: string
+          sort_order?: number
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          icon?: string | null
+          id?: string
+          label?: string
+          slug?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -23,7 +227,9 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      log_level: "INFO" | "WARN" | "ERROR" | "OK"
+      log_source: "SYSTEM" | "MODEL" | "SKILL" | "TERMINAL"
+      message_role: "operator" | "agent"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +356,10 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      log_level: ["INFO", "WARN", "ERROR", "OK"],
+      log_source: ["SYSTEM", "MODEL", "SKILL", "TERMINAL"],
+      message_role: ["operator", "agent"],
+    },
   },
 } as const
