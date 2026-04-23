@@ -70,6 +70,34 @@ const Login = () => {
           </p>
         </div>
 
+        {/* Explicit mode selector — prevents accidental signup on returning login */}
+        <div className="mb-4 grid grid-cols-2 gap-1 rounded-lg border border-border bg-surface-2 p-1">
+          <button
+            type="button"
+            onClick={() => setMode("signin")}
+            className={`rounded-md py-2 font-mono text-[10px] uppercase tracking-widest transition-all ${
+              mode === "signin"
+                ? "bg-cyan text-cyan-foreground glow-cyan-soft"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <LogIn className="mr-1.5 inline h-3 w-3" />
+            Sign In
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("signup")}
+            className={`rounded-md py-2 font-mono text-[10px] uppercase tracking-widest transition-all ${
+              mode === "signup"
+                ? "bg-cyan text-cyan-foreground glow-cyan-soft"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <UserPlus className="mr-1.5 inline h-3 w-3" />
+            Sign Up
+          </button>
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="email" className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
@@ -114,16 +142,12 @@ const Login = () => {
             className="w-full bg-cyan font-mono text-xs uppercase tracking-widest text-cyan-foreground hover:bg-cyan/90 glow-cyan"
           >
             <Power className="mr-2 h-4 w-4" />
-            {busy ? "AUTHENTICATING..." : mode === "signin" ? "ENGAGE TERMINAL" : "PROVISION OPERATOR"}
+            {busy
+              ? "AUTHENTICATING..."
+              : mode === "signin"
+              ? "SIGN IN"
+              : "SIGN UP // PROVISION OPERATOR"}
           </Button>
-
-          <button
-            type="button"
-            onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
-            className="block w-full text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground hover:text-cyan"
-          >
-            {mode === "signin" ? "// FIRST DEPLOYMENT? PROVISION OPERATOR" : "// EXISTING OPERATOR? SIGN IN"}
-          </button>
         </form>
 
         <p className="mt-6 text-center font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
