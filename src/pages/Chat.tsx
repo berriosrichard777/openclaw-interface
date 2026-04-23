@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useOperator } from "@/hooks/useOperator";
+import { useGatewayToken } from "@/hooks/useGatewayToken";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
