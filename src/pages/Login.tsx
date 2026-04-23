@@ -23,9 +23,11 @@ const Login = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Snapshot mode at submission to avoid race conditions on rapid toggles
+    const submissionMode = mode;
     setBusy(true);
     try {
-      if (mode === "signup") {
+      if (submissionMode === "signup") {
         const { error } = await supabase.auth.signUp({
           email,
           password,
@@ -40,8 +42,10 @@ const Login = () => {
         if (signErr) throw signErr;
         navigate("/", { replace: true });
       } else {
+        // Explicit SIGN IN — never call signUp here
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        toast({ title: "ACCESS GRANTED", description: "Terminal engaged." });
         navigate("/", { replace: true });
       }
     } catch (err) {
