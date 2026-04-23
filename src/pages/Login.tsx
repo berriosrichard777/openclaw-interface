@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
-import { Lock, Mail, Power } from "lucide-react";
+import { Lock, LogIn, Mail, Power, UserPlus } from "lucide-react";
 
 const Login = () => {
   const navigate = useNavigate();
