@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { Menu, LayoutDashboard, Cpu, MessageSquare, Wand2, Activity, LogOut, Power } from "lucide-react";
+import { Menu, LayoutDashboard, Cpu, MessageSquare, Wand2, Activity, LogOut, Power, Settings } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { useOperator } from "@/hooks/useOperator";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 import operatorAvatar from "@/assets/operator-avatar.jpg";
+import { SettingsDialog } from "@/components/SettingsDialog";
+import { useBridgeStatus } from "@/hooks/useBridgeStatus";
 
 const tabs = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -105,6 +107,26 @@ const SidebarBody = ({ onClose }: { onClose?: () => void }) => {
 
 export const AppShell = () => {
   const [open, setOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const bridgeStatus = useBridgeStatus();
+
+  const isOnline = bridgeStatus === "ONLINE";
+  const isChecking = bridgeStatus === "CHECKING";
+  const statusBorder = isOnline
+    ? "border-green-neon/30"
+    : isChecking
+      ? "border-cyan/30"
+      : "border-border";
+  const statusDot = isOnline
+    ? "bg-green-neon pulse-dot"
+    : isChecking
+      ? "bg-cyan animate-pulse"
+      : "bg-muted-foreground";
+  const statusText = isOnline
+    ? "text-green-neon"
+    : isChecking
+      ? "text-cyan"
+      : "text-muted-foreground";
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background">
@@ -126,11 +148,26 @@ export const AppShell = () => {
             <p className="font-mono text-[9px] uppercase tracking-[0.25em] text-muted-foreground">CONTROL // v2.4</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 rounded-full border border-green-neon/30 bg-surface-2/60 px-2.5 py-1">
-          <span className="h-2 w-2 rounded-full bg-green-neon pulse-dot" />
-          <span className="font-mono text-[10px] uppercase tracking-widest text-green-neon">SYSTEM ACTIVE</span>
+        <div className="flex items-center gap-2">
+          <div className={cn("flex items-center gap-2 rounded-full border bg-surface-2/60 px-2.5 py-1", statusBorder)}>
+            <span className={cn("h-2 w-2 rounded-full", statusDot)} />
+            <span className={cn("font-mono text-[10px] uppercase tracking-widest", statusText)}>
+              {isOnline ? "ONLINE" : isChecking ? "CHECKING" : "STANDBY"}
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Open settings"
+            onClick={() => setSettingsOpen(true)}
+            className="h-9 w-9 text-muted-foreground hover:text-cyan"
+          >
+            <Settings className="h-5 w-5" />
+          </Button>
         </div>
       </header>
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       {/* Main */}
       <main className="flex-1 pb-20">

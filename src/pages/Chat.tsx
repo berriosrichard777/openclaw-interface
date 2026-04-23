@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useOperator } from "@/hooks/useOperator";
+import { useGatewayToken } from "@/hooks/useGatewayToken";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +13,7 @@ type Msg = { id: string; role: "operator" | "agent"; content: string; created_at
 const Chat = () => {
   const { user } = useAuth();
   const { activeModel } = useOperator();
+  const { token: gatewayToken } = useGatewayToken();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -68,9 +70,10 @@ const Chat = () => {
         .map((o: any) => o.skills?.slug)
         .filter(Boolean) as string[];
 
-      // Invoke edge function
+      // Invoke edge function (forward gateway token via custom header)
       const { data, error } = await supabase.functions.invoke("openclaw-agent", {
         body: { command: cmd, model: activeModel?.slug, skills },
+        headers: gatewayToken ? { "x-gateway-token": gatewayToken } : undefined,
       });
       if (error) throw error;
 

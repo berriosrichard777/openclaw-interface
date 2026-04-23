@@ -4,7 +4,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.49.8";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+    "authorization, x-client-info, apikey, content-type, x-gateway-token, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 interface AgentRequest {
@@ -71,7 +71,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    const apiKey = Deno.env.get("OPENCLAW_API_KEY");
+    // Prefer per-request token forwarded from the client (LocalStorage),
+    // fall back to the server-side OPENCLAW_API_KEY secret.
+    const headerToken = req.headers.get("x-gateway-token")?.trim();
+    const apiKey = headerToken || Deno.env.get("OPENCLAW_API_KEY");
     const VPS_BASE = "https://ai.richops.cloud";
     let reply: string;
 
