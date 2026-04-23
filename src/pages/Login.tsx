@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
-import { Lock, Mail, Power } from "lucide-react";
+import { Lock, LogIn, Mail, Power, UserPlus } from "lucide-react";
 
 const Login = () => {
   const navigate = useNavigate();
@@ -23,9 +23,11 @@ const Login = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Snapshot mode at submission to avoid race conditions on rapid toggles
+    const submissionMode = mode;
     setBusy(true);
     try {
-      if (mode === "signup") {
+      if (submissionMode === "signup") {
         const { error } = await supabase.auth.signUp({
           email,
           password,
@@ -40,8 +42,10 @@ const Login = () => {
         if (signErr) throw signErr;
         navigate("/", { replace: true });
       } else {
+        // Explicit SIGN IN — never call signUp here
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        toast({ title: "ACCESS GRANTED", description: "Terminal engaged." });
         navigate("/", { replace: true });
       }
     } catch (err) {
@@ -64,6 +68,34 @@ const Login = () => {
           <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
             CONTROL :: V2.4.0
           </p>
+        </div>
+
+        {/* Explicit mode selector — prevents accidental signup on returning login */}
+        <div className="mb-4 grid grid-cols-2 gap-1 rounded-lg border border-border bg-surface-2 p-1">
+          <button
+            type="button"
+            onClick={() => setMode("signin")}
+            className={`rounded-md py-2 font-mono text-[10px] uppercase tracking-widest transition-all ${
+              mode === "signin"
+                ? "bg-cyan text-cyan-foreground glow-cyan-soft"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <LogIn className="mr-1.5 inline h-3 w-3" />
+            Sign In
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("signup")}
+            className={`rounded-md py-2 font-mono text-[10px] uppercase tracking-widest transition-all ${
+              mode === "signup"
+                ? "bg-cyan text-cyan-foreground glow-cyan-soft"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <UserPlus className="mr-1.5 inline h-3 w-3" />
+            Sign Up
+          </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -110,16 +142,12 @@ const Login = () => {
             className="w-full bg-cyan font-mono text-xs uppercase tracking-widest text-cyan-foreground hover:bg-cyan/90 glow-cyan"
           >
             <Power className="mr-2 h-4 w-4" />
-            {busy ? "AUTHENTICATING..." : mode === "signin" ? "ENGAGE TERMINAL" : "PROVISION OPERATOR"}
+            {busy
+              ? "AUTHENTICATING..."
+              : mode === "signin"
+              ? "SIGN IN"
+              : "SIGN UP // PROVISION OPERATOR"}
           </Button>
-
-          <button
-            type="button"
-            onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
-            className="block w-full text-center font-mono text-[11px] uppercase tracking-widest text-muted-foreground hover:text-cyan"
-          >
-            {mode === "signin" ? "// FIRST DEPLOYMENT? PROVISION OPERATOR" : "// EXISTING OPERATOR? SIGN IN"}
-          </button>
         </form>
 
         <p className="mt-6 text-center font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
