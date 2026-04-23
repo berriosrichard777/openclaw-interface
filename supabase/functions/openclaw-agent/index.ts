@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
     }
 
     const apiKey = Deno.env.get("OPENCLAW_API_KEY");
-    const VPS_BASE = "https://ai.richops.cloud:18789";
+    const VPS_BASE = "https://ai.richops.cloud";
     let reply: string;
 
     if (apiKey) {
