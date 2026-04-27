@@ -5,6 +5,7 @@ import { useOperator } from "@/hooks/useOperator";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
+import BridgeTestCard from "@/components/BridgeTestCard";
 
 const Stat = ({
   label,
@@ -77,6 +78,8 @@ const Dashboard = () => {
         <Stat label="Skills" value={String(skillsOn)} hint="enabled" accent="green" />
         <Stat label="Log Events" value={String(logsCount)} hint="lifetime" />
       </section>
+
+      <BridgeTestCard />
 
       <section className="grid gap-3 sm:grid-cols-3">
         <Link
