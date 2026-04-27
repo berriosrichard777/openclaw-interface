@@ -2,7 +2,6 @@ import { useState } from "react";
 import { PlugZap, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
-import { useGatewayToken } from "@/hooks/useGatewayToken";
 import { cn } from "@/lib/utils";
 
 type StepResult = {
@@ -38,14 +37,12 @@ const Row = ({ label, value, accent }: { label: string; value: string; accent?: 
 );
 
 const BridgeTestCard = () => {
-  const { token: gatewayToken } = useGatewayToken();
   const [running, setRunning] = useState(false);
   const [state, setState] = useState<TestState | null>(null);
 
   const runOne = async (action: "health" | "system") => {
     const { data, error } = await supabase.functions.invoke("openclaw-agent", {
       body: { command: `bridge ${action} probe`, action },
-      headers: gatewayToken ? { "x-gateway-token": gatewayToken } : undefined,
     });
     if (error) throw error;
     const call = data?.calls?.[0] as StepResult | undefined;
