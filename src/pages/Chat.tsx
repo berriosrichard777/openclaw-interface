@@ -43,7 +43,7 @@ const Chat = () => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
-  const send = async (text: string) => {
+  const send = async (text: string, action?: BridgeAction) => {
     if (!user || !text.trim() || sending) return;
     setSending(true);
     const cmd = text.trim();
@@ -78,9 +78,12 @@ const Chat = () => {
         .map((o: any) => o.skills?.slug)
         .filter(Boolean) as string[];
 
-      // Invoke edge function (forward gateway token via custom header)
+      // Invoke edge function (forward gateway token via custom header).
+      // The token never lives in this bundle; it is read from LocalStorage
+      // (Settings dialog) and forwarded ONLY through the request header to
+      // the Edge Function, which calls the bridge server-side.
       const { data, error } = await supabase.functions.invoke("openclaw-agent", {
-        body: { command: cmd, model: activeModel?.slug, skills },
+        body: { command: cmd, model: activeModel?.slug, skills, action },
         headers: gatewayToken ? { "x-gateway-token": gatewayToken } : undefined,
       });
       if (error) throw error;
@@ -104,9 +107,14 @@ const Chat = () => {
     }
   };
 
-  const quickActions = [
-    { label: "Full Diagnostic", icon: Zap, cmd: "Run a full diagnostic sweep on all subsystems." },
-    { label: "System Logs", icon: FileText, cmd: "Show the last system log events." },
+  // Quick actions map UI buttons → explicit bridge actions (no NL parsing).
+  const quickActions: { label: string; icon: typeof Zap; cmd: string; action: BridgeAction }[] = [
+    { label: "Full Diagnostic", icon: Zap,        cmd: "Run full diagnostic sweep.",     action: "diagnostic"     },
+    { label: "System Logs",     icon: FileText,   cmd: "Fetch last 50 system logs.",      action: "logs"           },
+    { label: "Health Check",    icon: HeartPulse, cmd: "Bridge health check.",            action: "health"         },
+    { label: "System Status",   icon: Cpu,        cmd: "Read system snapshot.",           action: "system"         },
+    { label: "Gateway Status",  icon: Radio,      cmd: "Read gateway link status.",       action: "gateway-status" },
+    { label: "General Status",  icon: Activity,   cmd: "Read general agent status.",      action: "status"         },
   ];
 
   return (
