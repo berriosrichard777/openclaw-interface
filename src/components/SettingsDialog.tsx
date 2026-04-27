@@ -1,4 +1,4 @@
-import { ShieldCheck, ServerCog } from "lucide-react";
+import { ShieldCheck, ServerCog, RefreshCw } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -6,6 +6,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { useBridgeStatus } from "@/hooks/useBridgeStatus";
 import { cn } from "@/lib/utils";
 
@@ -20,9 +21,12 @@ interface SettingsDialogProps {
  * SECURITY: There is no token input field. The bridge token is stored ONLY
  * as a backend secret (OPENCLAW_BRIDGE_TOKEN) and is never read or held by
  * the browser. This dialog is read-only status information.
+ *
+ * Bridge status is manual: the user clicks "Check now" to probe.
  */
 export const SettingsDialog = ({ open, onOpenChange }: SettingsDialogProps) => {
-  const status = useBridgeStatus();
+  const { status, check } = useBridgeStatus();
+  const isChecking = status === "CHECKING";
 
   const statusColor =
     status === "ONLINE"
@@ -59,12 +63,29 @@ export const SettingsDialog = ({ open, onOpenChange }: SettingsDialogProps) => {
                   "h-2 w-2 rounded-full",
                   status === "ONLINE" && "bg-green-neon pulse-dot",
                   status === "CHECKING" && "bg-cyan animate-pulse",
-                  status === "STANDBY" && "bg-muted-foreground",
+                  (status === "STANDBY" || status === "IDLE") && "bg-muted-foreground",
                 )}
               />
               {status}
             </span>
           </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={check}
+            disabled={isChecking}
+            className="w-full justify-center gap-2 font-mono text-[11px] uppercase tracking-widest"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", isChecking && "animate-spin")} />
+            {isChecking ? "Checking..." : "Check now"}
+          </Button>
+
+          <p className="font-mono text-[10px] text-muted-foreground">
+            Auto-refresh disabled. The bridge status only updates when you click
+            "Check now" or run a probe from the dashboard.
+          </p>
 
           <div className="rounded-md border border-border bg-surface-2/60 p-3">
             <div className="flex items-start gap-2">

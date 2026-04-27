@@ -1,49 +1,38 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
-export type BridgeStatus = "ONLINE" | "STANDBY" | "CHECKING";
-
-const POLL_INTERVAL = 30_000; // 30s
+export type BridgeStatus = "ONLINE" | "STANDBY" | "CHECKING" | "IDLE";
 
 /**
- * Bridge status probe.
+ * Bridge status (manual only).
  *
- * SECURITY: This hook does NOT touch any token. It calls the
- * `openclaw-agent` Edge Function with `action: "health"`. The bridge token
- * lives exclusively in backend secrets (OPENCLAW_BRIDGE_TOKEN).
+ * SECURITY: Does NOT touch any token. Calls the `openclaw-agent` Edge
+ * Function with `action: "health"`. The bridge token lives exclusively in
+ * backend secrets (OPENCLAW_BRIDGE_TOKEN).
+ *
+ * NOTE: Auto-refresh is intentionally disabled. The status only updates
+ * when `check()` is invoked manually (e.g. by a button). A toggleable
+ * auto-refresh will be added in a later iteration.
  */
 export function useBridgeStatus() {
-  const [status, setStatus] = useState<BridgeStatus>("CHECKING");
+  const [status, setStatus] = useState<BridgeStatus>("IDLE");
 
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | undefined;
-
-    const ping = async () => {
-      try {
-        const { data, error } = await supabase.functions.invoke("openclaw-agent", {
-          body: { command: "bridge health probe", action: "health" },
-        });
-        if (cancelled) return;
-        if (error) {
-          setStatus("STANDBY");
-          return;
-        }
-        const ok = Array.isArray(data?.calls) && data.calls[0]?.ok === true;
-        setStatus(ok ? "ONLINE" : "STANDBY");
-      } catch {
-        if (!cancelled) setStatus("STANDBY");
-      }
-    };
-
+  const check = async () => {
     setStatus("CHECKING");
-    ping();
-    timer = window.setInterval(ping, POLL_INTERVAL);
-    return () => {
-      cancelled = true;
-      if (timer) window.clearInterval(timer);
-    };
-  }, []);
+    try {
+      const { data, error } = await supabase.functions.invoke("openclaw-agent", {
+        body: { command: "bridge health probe", action: "health" },
+      });
+      if (error) {
+        setStatus("STANDBY");
+        return;
+      }
+      const ok = Array.isArray(data?.calls) && data.calls[0]?.ok === true;
+      setStatus(ok ? "ONLINE" : "STANDBY");
+    } catch {
+      setStatus("STANDBY");
+    }
+  };
 
-  return status;
+  return { status, check };
 }

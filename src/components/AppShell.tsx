@@ -108,10 +108,11 @@ const SidebarBody = ({ onClose }: { onClose?: () => void }) => {
 export const AppShell = () => {
   const [open, setOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const bridgeStatus = useBridgeStatus();
+  const { status: bridgeStatus } = useBridgeStatus();
 
   const isOnline = bridgeStatus === "ONLINE";
   const isChecking = bridgeStatus === "CHECKING";
+  const isIdle = bridgeStatus === "IDLE";
   const statusBorder = isOnline
     ? "border-green-neon/30"
     : isChecking
@@ -127,6 +128,13 @@ export const AppShell = () => {
     : isChecking
       ? "text-cyan"
       : "text-muted-foreground";
+  const statusLabel = isOnline
+    ? "ONLINE"
+    : isChecking
+      ? "CHECKING"
+      : isIdle
+        ? "IDLE"
+        : "STANDBY";
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-background">
@@ -152,7 +160,7 @@ export const AppShell = () => {
           <div className={cn("flex items-center gap-2 rounded-full border bg-surface-2/60 px-2.5 py-1", statusBorder)}>
             <span className={cn("h-2 w-2 rounded-full", statusDot)} />
             <span className={cn("font-mono text-[10px] uppercase tracking-widest", statusText)}>
-              {isOnline ? "ONLINE" : isChecking ? "CHECKING" : "STANDBY"}
+              {statusLabel}
             </span>
           </div>
           <Button
