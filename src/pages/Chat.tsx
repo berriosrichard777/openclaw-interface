@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Send, Zap, FileText, Bot, User } from "lucide-react";
+import { Send, Zap, FileText, Bot, User, HeartPulse, Cpu, Radio, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -9,6 +9,14 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 type Msg = { id: string; role: "operator" | "agent"; content: string; created_at: string };
+
+type BridgeAction =
+  | "logs"
+  | "diagnostic"
+  | "health"
+  | "system"
+  | "gateway-status"
+  | "status";
 
 const Chat = () => {
   const { user } = useAuth();
