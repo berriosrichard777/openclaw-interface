@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useOperator } from "@/hooks/useOperator";
-import { useGatewayToken } from "@/hooks/useGatewayToken";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -21,7 +20,6 @@ type BridgeAction =
 const Chat = () => {
   const { user } = useAuth();
   const { activeModel } = useOperator();
-  const { token: gatewayToken } = useGatewayToken();
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -78,13 +76,10 @@ const Chat = () => {
         .map((o: any) => o.skills?.slug)
         .filter(Boolean) as string[];
 
-      // Invoke edge function (forward gateway token via custom header).
-      // The token never lives in this bundle; it is read from LocalStorage
-      // (Settings dialog) and forwarded ONLY through the request header to
-      // the Edge Function, which calls the bridge server-side.
+      // Invoke edge function. The bridge token is read server-side ONLY,
+      // from the OPENCLAW_BRIDGE_TOKEN secret. The frontend never handles it.
       const { data, error } = await supabase.functions.invoke("openclaw-agent", {
         body: { command: cmd, model: activeModel?.slug, skills, action },
-        headers: gatewayToken ? { "x-gateway-token": gatewayToken } : undefined,
       });
       if (error) throw error;
 
