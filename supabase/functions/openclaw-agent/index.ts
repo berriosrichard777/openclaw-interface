@@ -1,9 +1,12 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.8";
 
+// NOTE: x-gateway-token is intentionally NOT allowed. The bridge token is
+// read exclusively from the OPENCLAW_BRIDGE_TOKEN backend secret. The
+// frontend MUST NOT send any token header.
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-gateway-token, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 interface AgentRequest {
@@ -125,19 +128,29 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Token resolution priority:
-    //   1. Per-request token forwarded from client (Settings modal / LocalStorage)
-    //   2. OPENCLAW_BRIDGE_TOKEN (preferred server-side secret)
-    //   3. OPENCLAW_API_KEY (legacy fallback)
-    const headerToken = req.headers.get("x-gateway-token")?.trim();
-    const bridgeToken =
-      headerToken ||
-      Deno.env.get("OPENCLAW_BRIDGE_TOKEN") ||
-      Deno.env.get("OPENCLAW_API_KEY");
+    // SECURITY: token is read ONLY from backend secrets. No header fallback,
+    // no client-supplied token, no LocalStorage path. Never logged or echoed.
+    const bridgeToken = Deno.env.get("OPENCLAW_BRIDGE_TOKEN");
 
     // Base URL: prefer OPENCLAW_BRIDGE_URL secret, fall back to legacy default.
     const VPS_BASE = (Deno.env.get("OPENCLAW_BRIDGE_URL") ?? "https://ai.richops.cloud")
       .replace(/\/+$/, "");
+
+    if (!bridgeToken) {
+      return new Response(
+        JSON.stringify({
+          error: "Bridge token not configured",
+          reply:
+            "BRIDGE TOKEN NOT CONFIGURED :: ask an administrator to set " +
+            "OPENCLAW_BRIDGE_TOKEN in backend secrets.",
+          calls: [],
+        }),
+        {
+          status: 503,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
 
     // Resolve which action to perform.
     const action: BridgeAction | null =
@@ -146,11 +159,7 @@ Deno.serve(async (req) => {
     let reply: string;
     let calls: BridgeCallResult[] = [];
 
-    if (!bridgeToken) {
-      reply =
-        "BRIDGE TOKEN MISSING :: configure OPENCLAW_BRIDGE_TOKEN in backend secrets " +
-        "or paste a Gateway Token via the Settings dialog.";
-    } else if (!action) {
+    if (!action) {
       reply = [
         "UNRECOGNIZED COMMAND :: no matching bridge endpoint.",
         "Available actions: health, system, gateway-status, status, logs, diagnostic.",
@@ -203,7 +212,8 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 },
     );
   } catch (e) {
-    console.error("openclaw-agent error", e);
+    // Generic error — never include secret material.
+    console.error("openclaw-agent error");
     return new Response(JSON.stringify({ error: (e as Error).message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

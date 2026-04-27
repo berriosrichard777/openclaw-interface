@@ -1,34 +1,36 @@
 import { useEffect, useState } from "react";
-import { getGatewayToken } from "./useGatewayToken";
+import { supabase } from "@/integrations/supabase/client";
 
 export type BridgeStatus = "ONLINE" | "STANDBY" | "CHECKING";
 
-const VPS_BASE = "https://ai.richops.cloud";
 const POLL_INTERVAL = 30_000; // 30s
 
-export function useBridgeStatus(token?: string) {
+/**
+ * Bridge status probe.
+ *
+ * SECURITY: This hook does NOT touch any token. It calls the
+ * `openclaw-agent` Edge Function with `action: "health"`. The bridge token
+ * lives exclusively in backend secrets (OPENCLAW_BRIDGE_TOKEN).
+ */
+export function useBridgeStatus() {
   const [status, setStatus] = useState<BridgeStatus>("CHECKING");
-  const activeToken = token ?? getGatewayToken();
 
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
 
     const ping = async () => {
-      if (!activeToken) {
-        if (!cancelled) setStatus("STANDBY");
-        return;
-      }
       try {
-        const ctrl = new AbortController();
-        const t = window.setTimeout(() => ctrl.abort(), 5000);
-        const res = await fetch(`${VPS_BASE}/health`, {
-          method: "GET",
-          headers: { Authorization: `Bearer ${activeToken}` },
-          signal: ctrl.signal,
+        const { data, error } = await supabase.functions.invoke("openclaw-agent", {
+          body: { command: "bridge health probe", action: "health" },
         });
-        window.clearTimeout(t);
-        if (!cancelled) setStatus(res.ok ? "ONLINE" : "STANDBY");
+        if (cancelled) return;
+        if (error) {
+          setStatus("STANDBY");
+          return;
+        }
+        const ok = Array.isArray(data?.calls) && data.calls[0]?.ok === true;
+        setStatus(ok ? "ONLINE" : "STANDBY");
       } catch {
         if (!cancelled) setStatus("STANDBY");
       }
@@ -41,7 +43,7 @@ export function useBridgeStatus(token?: string) {
       cancelled = true;
       if (timer) window.clearInterval(timer);
     };
-  }, [activeToken]);
+  }, []);
 
   return status;
 }
