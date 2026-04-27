@@ -196,7 +196,7 @@ const Chat = () => {
             {quickActions.map((q) => (
               <button
                 key={q.label}
-                onClick={() => send(q.cmd)}
+                onClick={() => send(q.cmd, q.action)}
                 disabled={sending}
                 className="flex items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-muted-foreground transition-colors hover:border-cyan/40 hover:text-cyan disabled:opacity-50"
               >
