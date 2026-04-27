@@ -79,6 +79,8 @@ const Dashboard = () => {
         <Stat label="Log Events" value={String(logsCount)} hint="lifetime" />
       </section>
 
+      <BridgeTestCard />
+
       <section className="grid gap-3 sm:grid-cols-3">
         <Link
           to="/models"
