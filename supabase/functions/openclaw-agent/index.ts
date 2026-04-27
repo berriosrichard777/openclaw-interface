@@ -71,11 +71,19 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Prefer per-request token forwarded from the client (LocalStorage),
-    // fall back to the server-side OPENCLAW_API_KEY secret.
+    // Token resolution priority:
+    //   1. Per-request token forwarded from client (Settings modal / LocalStorage)
+    //   2. OPENCLAW_BRIDGE_TOKEN (preferred server-side secret)
+    //   3. OPENCLAW_API_KEY (legacy fallback)
     const headerToken = req.headers.get("x-gateway-token")?.trim();
-    const apiKey = headerToken || Deno.env.get("OPENCLAW_API_KEY");
-    const VPS_BASE = "https://ai.richops.cloud";
+    const apiKey =
+      headerToken ||
+      Deno.env.get("OPENCLAW_BRIDGE_TOKEN") ||
+      Deno.env.get("OPENCLAW_API_KEY");
+
+    // Base URL: prefer OPENCLAW_BRIDGE_URL secret, fall back to legacy default.
+    const VPS_BASE = (Deno.env.get("OPENCLAW_BRIDGE_URL") ?? "https://ai.richops.cloud")
+      .replace(/\/+$/, "");
     let reply: string;
 
     if (apiKey) {
