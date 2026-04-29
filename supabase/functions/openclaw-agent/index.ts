@@ -170,35 +170,83 @@ const buildTelegramSummary = (
   const canJoin    = find(/^can[_-]?join[_-]?groups$/i);
   const canReadAll = find(/^can[_-]?read[_-]?all[_-]?group[_-]?messages$/i);
 
-  // Final verdict.
-  let verdict: "OK" | "WARNING" | "ERROR" = "OK";
+  // ---- Logs scan: look for evidence that sendMessage succeeded ----------
+  // We scan the logs body as text, regardless of whether it's JSON or raw.
+  let logsText = "";
+  try {
+    logsText = typeof logs.body === "string"
+      ? logs.body
+      : JSON.stringify(logs.body);
+  } catch {
+    logsText = "";
+  }
+
+  // Detect "telegram sendMessage ok" (case-insensitive, tolerant of punctuation).
+  const sendOkRe = /telegram[^\n]{0,40}send[_-]?message[^\n]{0,20}\bok\b/i;
+  const sendMessageOk = sendOkRe.test(logsText);
+
+  // Try to extract the latest timestamp from a log line that mentions telegram.
+  // Supports ISO-8601 timestamps; falls back to bracketed times.
+  let lastTelegramLogTs: string | undefined;
+  const lineRe = /[^\n\r]*telegram[^\n\r]*/gi;
+  const isoRe  = /\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/;
+  const tgLines = logsText.match(lineRe) ?? [];
+  for (const ln of tgLines) {
+    const m = ln.match(isoRe);
+    if (m) lastTelegramLogTs = m[0]; // last match wins → most recent
+  }
+
+  // ---- Verdict ----------------------------------------------------------
+  // OPERATIONAL    → configured + sendMessage ok in logs (even if running=false)
+  // PARTIAL OK     → configured + sendMessage ok but a runtime field disagrees
+  // WARNING / ERROR / OK as before for other cases.
+  let verdict: "OK" | "OPERATIONAL" | "PARTIAL OK" | "WARNING" | "ERROR" = "OK";
   if (!health.ok || !status.ok) verdict = "WARNING";
   if (configured === false) verdict = "WARNING";
   if (running === false) verdict = "WARNING";
   if (lastError && typeof lastError === "string" && lastError.trim() !== "") verdict = "ERROR";
 
+  // sendMessage success overrides "running=false" warning.
+  if (configured === true && sendMessageOk) {
+    verdict = running === false ? "PARTIAL OK" : "OPERATIONAL";
+  }
+
+  const headline = (verdict === "OPERATIONAL" || verdict === "PARTIAL OK")
+    ? `TELEGRAM STATUS :: OPERATIONAL / ${verdict === "PARTIAL OK" ? "PARTIAL OK" : "OK"}`
+    : `TELEGRAM STATUS :: ${verdict}`;
+
   const lines = [
-    `TELEGRAM STATUS :: ${verdict}`,
+    headline,
     "",
-    `  configured            : ${fmt(configured)}`,
-    `  bot username          : ${fmt(username)}`,
-    `  running               : ${fmt(running)}`,
-    `  last probe            : ${fmt(lastProbe)}`,
-    `  last error            : ${fmt(lastError)}`,
-    `  webhook url           : ${webhookUrl ? "present" : "unknown"}`,
-    `  can join groups       : ${fmt(canJoin)}`,
-    `  can read all messages : ${fmt(canReadAll)}`,
+    `  configured                 : ${fmt(configured)}`,
+    `  bot username               : ${fmt(username)}`,
+    `  send message test detected : ${sendMessageOk ? "true" : "false"}`,
+    `  running field              : ${fmt(running)}`,
+    `  last probe                 : ${fmt(lastProbe)}`,
+    `  last error                 : ${fmt(lastError)}`,
+    `  last telegram log ts       : ${fmt(lastTelegramLogTs)}`,
+    `  webhook url                : ${webhookUrl ? "present" : "unknown"}`,
+    `  can join groups            : ${fmt(canJoin)}`,
+    `  can read all messages      : ${fmt(canReadAll)}`,
     "",
     `  sources :: health HTTP ${health.status} · status HTTP ${status.status} · logs HTTP ${logs.status}`,
   ];
 
-  // Contextual explanation for the common "configured but not running" case.
-  if (configured === true && running === false) {
+  // Contextual explanations.
+  if (configured === true && sendMessageOk && running === false) {
+    lines.push(
+      "",
+      "RUNTIME WARNING ::",
+      "  OpenClaw reports running=false, but Telegram sendMessage succeeded",
+      "  in recent logs. Telegram is operational for outbound messaging;",
+      "  the running flag may reflect a stale or partial runtime probe.",
+    );
+  } else if (configured === true && running === false && !sendMessageOk) {
     lines.push(
       "",
       "EXPLANATION ::",
-      "  Telegram está configurado, pero OpenClaw lo reporta como no running.",
-      "  Puede requerir revisar el gateway/channel runtime.",
+      "  Telegram está configurado, pero OpenClaw lo reporta como no running",
+      "  y no se detectaron envíos exitosos en los logs recientes.",
     );
   } else if (lastError && typeof lastError === "string" && lastError.trim() !== "") {
     lines.push(
@@ -216,17 +264,16 @@ const buildTelegramSummary = (
     );
   }
 
-  // Read-only recommendations. This endpoint NEVER restarts or mutates state.
-  if (verdict !== "OK") {
+  // Recommended checks: shown unless verdict is plain OK / OPERATIONAL.
+  if (verdict !== "OK" && verdict !== "OPERATIONAL") {
     lines.push(
       "",
       "RECOMMENDED CHECKS ::",
-      "  • Verify OpenClaw gateway is running",
-      "  • Check Telegram channel/plugin status",
-      "  • Review recent Telegram logs",
-      "  • Send a test message to the Telegram bot",
+      "  • Review Telegram runtime/plugin status",
+      "  • Monitor future Telegram logs",
+      "  • Send another test message if needed",
       "",
-      "  (read-only :: no restart or configuration change performed)",
+      "  (read-only :: no restart, webhook change, or configuration change performed)",
     );
   }
 
