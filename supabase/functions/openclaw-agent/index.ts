@@ -266,12 +266,12 @@ Deno.serve(async (req) => {
     if (!action) {
       reply = [
         "UNRECOGNIZED COMMAND :: no matching bridge endpoint.",
-        "Available actions: health, system, gateway-status, status, logs, diagnostic.",
+        "Available actions: health, system, gateway-status, status, logs, diagnostic, telegram-status.",
         `> ${body.command.trim()}`,
       ].join("\n");
     } else if (action === "diagnostic") {
       // Full Diagnostic: run health + system + gateway-status + status in parallel.
-      const order: Array<Exclude<BridgeAction, "diagnostic">> = [
+      const order: Array<Exclude<BridgeAction, "diagnostic" | "telegram-status">> = [
         "health", "system", "gateway-status", "status",
       ];
       calls = await Promise.all(
@@ -283,6 +283,16 @@ Deno.serve(async (req) => {
         "",
         ...calls.map((c, i) => formatResult(order[i].toUpperCase(), c)),
       ].join("\n\n");
+    } else if (action === "telegram-status") {
+      // Telegram status :: composes data from health + status + logs(100).
+      // No new bridge endpoint needed; never exposes tokens or headers.
+      const [h, s, l] = await Promise.all([
+        callBridge(VPS_BASE, "/api/openclaw/health", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/status", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/logs?lines=100", bridgeToken),
+      ]);
+      calls = [h, s, l];
+      reply = buildTelegramSummary(h, s, l);
     } else {
       const path = BRIDGE_ROUTES[action];
       const r = await callBridge(VPS_BASE, path, bridgeToken);
