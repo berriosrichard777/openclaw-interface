@@ -23,7 +23,8 @@ type BridgeAction =
   | "gateway-status"
   | "status"
   | "logs"
-  | "diagnostic";
+  | "diagnostic"
+  | "telegram-status";
 
 // Bridge endpoint map. All routes are GET.
 const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic">, string> = {
