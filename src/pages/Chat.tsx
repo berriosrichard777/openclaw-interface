@@ -306,7 +306,7 @@ const Chat = () => {
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="TRANSMIT_COMMAND_TO_AGENT..."
+              placeholder="TYPE: health · system · gateway · status · logs · diagnostic · telegram"
               disabled={sending}
               className="flex-1 bg-transparent font-mono text-sm outline-none placeholder:font-mono placeholder:text-[11px] placeholder:uppercase placeholder:tracking-widest placeholder:text-muted-foreground"
             />
