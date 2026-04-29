@@ -18,6 +18,71 @@ type BridgeAction =
   | "gateway-status"
   | "status";
 
+// SECURE COMMAND MAP :: only these inputs are allowed. Anything else is
+// rejected locally without ever reaching the bridge or VPS.
+const COMMAND_HELP = [
+  "UNRECOGNIZED COMMAND :: input rejected by command guard.",
+  "",
+  "ALLOWED COMMANDS:",
+  "  health      | /health        → bridge health check",
+  "  system      | /system        → system snapshot",
+  "  gateway     | /gateway       → gateway link status",
+  "  status      | /status        → general agent status",
+  "  logs        | /logs          → recent system logs",
+  "  diagnostic  | /diagnostic    → full diagnostic sweep",
+  "  telegram    | /telegram      → telegram bridge status",
+  "",
+  "NATURAL PHRASES ACCEPTED:",
+  "  \"check health\", \"system status\", \"gateway status\",",
+  "  \"show logs\", \"full diagnostic\", \"check telegram\".",
+].join("\n");
+
+const TELEGRAM_NOT_IMPLEMENTED = [
+  "TELEGRAM STATUS :: NOT IMPLEMENTED",
+  "",
+  "The telegram-status endpoint is not wired into the bridge yet.",
+  "It will be enabled in a future update.",
+].join("\n");
+
+type ResolvedCommand =
+  | { kind: "action"; action: BridgeAction; label: string }
+  | { kind: "local"; reply: string };
+
+const resolveCommand = (raw: string): ResolvedCommand => {
+  const c = raw.trim().toLowerCase().replace(/^\/+/, "");
+  if (!c) return { kind: "local", reply: COMMAND_HELP };
+
+  // Diagnostic
+  if (/^(diagnostic|full[\s_-]*diagnostic|sweep|full[\s_-]*scan)$/.test(c))
+    return { kind: "action", action: "diagnostic", label: "Full Diagnostic" };
+
+  // Logs
+  if (/^(logs?|show[\s_-]+logs?|tail[\s_-]+logs?)$/.test(c))
+    return { kind: "action", action: "logs", label: "System Logs" };
+
+  // Gateway
+  if (/^(gateway|gateway[\s_-]*status|check[\s_-]+gateway)$/.test(c))
+    return { kind: "action", action: "gateway-status", label: "Gateway Status" };
+
+  // Health
+  if (/^(health|check[\s_-]+health|ping|alive)$/.test(c))
+    return { kind: "action", action: "health", label: "Health Check" };
+
+  // System
+  if (/^(system|system[\s_-]*status|check[\s_-]+system)$/.test(c))
+    return { kind: "action", action: "system", label: "System Status" };
+
+  // Status (general)
+  if (/^(status|general[\s_-]*status|agent[\s_-]*status)$/.test(c))
+    return { kind: "action", action: "status", label: "General Status" };
+
+  // Telegram (not implemented yet)
+  if (/^(telegram|telegram[\s_-]*status|check[\s_-]+telegram)$/.test(c))
+    return { kind: "local", reply: TELEGRAM_NOT_IMPLEMENTED };
+
+  return { kind: "local", reply: COMMAND_HELP };
+};
+
 const Chat = () => {
   const { user } = useAuth();
   const { activeModel } = useOperator();
@@ -44,8 +109,22 @@ const Chat = () => {
 
   const send = async (text: string, action?: BridgeAction) => {
     if (!user || !text.trim() || sending) return;
-    setSending(true);
     const cmd = text.trim();
+
+    // If no explicit action (i.e. typed input), run it through the secure
+    // command guard. Free-form text is NEVER forwarded to the VPS.
+    let resolvedAction: BridgeAction | undefined = action;
+    let localReply: string | null = null;
+    if (!action) {
+      const resolved = resolveCommand(cmd);
+      if (resolved.kind === "action") {
+        resolvedAction = resolved.action;
+      } else {
+        localReply = resolved.reply;
+      }
+    }
+
+    setSending(true);
     setInput("");
 
     // Optimistic operator message
@@ -67,6 +146,21 @@ const Chat = () => {
         model_slug: activeModel?.slug ?? null,
       });
 
+      // Local rejection / not-implemented path → never call the bridge.
+      if (localReply !== null) {
+        await supabase.from("chat_messages").insert({
+          user_id: user.id,
+          role: "agent",
+          content: localReply,
+          model_slug: activeModel?.slug ?? null,
+        });
+        setMessages((m) => [
+          ...m,
+          { id: crypto.randomUUID(), role: "agent", content: localReply!, created_at: new Date().toISOString() },
+        ]);
+        return;
+      }
+
       // Get enabled skills
       const { data: ops } = await supabase
         .from("operator_skills")
@@ -80,7 +174,7 @@ const Chat = () => {
       // Invoke edge function. The bridge token is read server-side ONLY,
       // from the OPENCLAW_BRIDGE_TOKEN secret. The frontend never handles it.
       const { data, error } = await supabase.functions.invoke("openclaw-agent", {
-        body: { command: cmd, model: activeModel?.slug, skills, action },
+        body: { command: cmd, model: activeModel?.slug, skills, action: resolvedAction },
       });
       if (error) throw error;
 
@@ -212,7 +306,7 @@ const Chat = () => {
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="TRANSMIT_COMMAND_TO_AGENT..."
+              placeholder="TYPE: health · system · gateway · status · logs · diagnostic · telegram"
               disabled={sending}
               className="flex-1 bg-transparent font-mono text-sm outline-none placeholder:font-mono placeholder:text-[11px] placeholder:uppercase placeholder:tracking-widest placeholder:text-muted-foreground"
             />
