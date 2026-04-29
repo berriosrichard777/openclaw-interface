@@ -27,7 +27,7 @@ type BridgeAction =
   | "telegram-status";
 
 // Bridge endpoint map. All routes are GET.
-const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic">, string> = {
+const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic" | "telegram-status">, string> = {
   "health": "/api/openclaw/health",
   "system": "/api/openclaw/system",
   "gateway-status": "/api/openclaw/gateway-status",
@@ -39,6 +39,7 @@ const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic">, string> = {
 const interpretCommand = (cmd: string): BridgeAction | null => {
   const c = cmd.trim().toLowerCase();
   if (!c) return null;
+  if (/telegram/.test(c)) return "telegram-status";
   if (/(full[\s_-]*)?diagnostic|sweep|full[\s_-]*scan/.test(c)) return "diagnostic";
   if (/\blogs?\b|tail|journal|events/.test(c)) return "logs";
   if (/gateway/.test(c)) return "gateway-status";
