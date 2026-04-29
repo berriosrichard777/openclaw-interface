@@ -191,6 +191,45 @@ const buildTelegramSummary = (
     "",
     `  sources :: health HTTP ${health.status} · status HTTP ${status.status} · logs HTTP ${logs.status}`,
   ];
+
+  // Contextual explanation for the common "configured but not running" case.
+  if (configured === true && running === false) {
+    lines.push(
+      "",
+      "EXPLANATION ::",
+      "  Telegram está configurado, pero OpenClaw lo reporta como no running.",
+      "  Puede requerir revisar el gateway/channel runtime.",
+    );
+  } else if (lastError && typeof lastError === "string" && lastError.trim() !== "") {
+    lines.push(
+      "",
+      "EXPLANATION ::",
+      "  Telegram reporta un error reciente. Revisa los logs y el estado",
+      "  del gateway/channel para más contexto.",
+    );
+  } else if (configured === false) {
+    lines.push(
+      "",
+      "EXPLANATION ::",
+      "  Telegram no está configurado en OpenClaw. Esta acción es read-only,",
+      "  no inicializa ni modifica la integración.",
+    );
+  }
+
+  // Read-only recommendations. This endpoint NEVER restarts or mutates state.
+  if (verdict !== "OK") {
+    lines.push(
+      "",
+      "RECOMMENDED CHECKS ::",
+      "  • Verify OpenClaw gateway is running",
+      "  • Check Telegram channel/plugin status",
+      "  • Review recent Telegram logs",
+      "  • Send a test message to the Telegram bot",
+      "",
+      "  (read-only :: no restart or configuration change performed)",
+    );
+  }
+
   return lines.join("\n");
 };
 
