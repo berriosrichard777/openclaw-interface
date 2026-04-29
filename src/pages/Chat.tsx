@@ -16,7 +16,8 @@ type BridgeAction =
   | "health"
   | "system"
   | "gateway-status"
-  | "status";
+  | "status"
+  | "telegram-status";
 
 // SECURE COMMAND MAP :: only these inputs are allowed. Anything else is
 // rejected locally without ever reaching the bridge or VPS.
@@ -35,13 +36,6 @@ const COMMAND_HELP = [
   "NATURAL PHRASES ACCEPTED:",
   "  \"check health\", \"system status\", \"gateway status\",",
   "  \"show logs\", \"full diagnostic\", \"check telegram\".",
-].join("\n");
-
-const TELEGRAM_NOT_IMPLEMENTED = [
-  "TELEGRAM STATUS :: NOT IMPLEMENTED",
-  "",
-  "The telegram-status endpoint is not wired into the bridge yet.",
-  "It will be enabled in a future update.",
 ].join("\n");
 
 type ResolvedCommand =
@@ -76,9 +70,9 @@ const resolveCommand = (raw: string): ResolvedCommand => {
   if (/^(status|general[\s_-]*status|agent[\s_-]*status)$/.test(c))
     return { kind: "action", action: "status", label: "General Status" };
 
-  // Telegram (not implemented yet)
+  // Telegram status (composed from health + status + logs server-side)
   if (/^(telegram|telegram[\s_-]*status|check[\s_-]+telegram)$/.test(c))
-    return { kind: "local", reply: TELEGRAM_NOT_IMPLEMENTED };
+    return { kind: "action", action: "telegram-status", label: "Telegram Status" };
 
   return { kind: "local", reply: COMMAND_HELP };
 };

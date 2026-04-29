@@ -23,10 +23,11 @@ type BridgeAction =
   | "gateway-status"
   | "status"
   | "logs"
-  | "diagnostic";
+  | "diagnostic"
+  | "telegram-status";
 
 // Bridge endpoint map. All routes are GET.
-const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic">, string> = {
+const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic" | "telegram-status">, string> = {
   "health": "/api/openclaw/health",
   "system": "/api/openclaw/system",
   "gateway-status": "/api/openclaw/gateway-status",
@@ -38,6 +39,7 @@ const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic">, string> = {
 const interpretCommand = (cmd: string): BridgeAction | null => {
   const c = cmd.trim().toLowerCase();
   if (!c) return null;
+  if (/telegram/.test(c)) return "telegram-status";
   if (/(full[\s_-]*)?diagnostic|sweep|full[\s_-]*scan/.test(c)) return "diagnostic";
   if (/\blogs?\b|tail|journal|events/.test(c)) return "logs";
   if (/gateway/.test(c)) return "gateway-status";
@@ -88,6 +90,108 @@ const formatResult = (label: string, r: BridgeCallResult): string => {
     ? r.body
     : JSON.stringify(r.body, null, 2);
   return `${head}\n${json}`;
+};
+
+// ---- Telegram status helpers --------------------------------------------
+// Safe deep-search: walks any JSON value looking for a key (case-insensitive)
+// matching one of the candidates. Returns the first non-null/undefined match.
+const SENSITIVE_KEY_RE = /(token|secret|authorization|api[_-]?key|password|bearer)/i;
+
+const deepFind = (root: unknown, candidates: RegExp[]): unknown => {
+  const seen = new Set<unknown>();
+  const stack: unknown[] = [root];
+  while (stack.length) {
+    const node = stack.pop();
+    if (node === null || node === undefined) continue;
+    if (typeof node !== "object") continue;
+    if (seen.has(node)) continue;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const v of node) stack.push(v);
+      continue;
+    }
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      if (SENSITIVE_KEY_RE.test(k)) continue; // never read sensitive fields
+      for (const re of candidates) {
+        if (re.test(k) && v !== null && v !== undefined && v !== "") {
+          return v;
+        }
+      }
+      if (v && typeof v === "object") stack.push(v);
+    }
+  }
+  return undefined;
+};
+
+const fmt = (v: unknown): string => {
+  if (v === undefined || v === null || v === "") return "unknown";
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (typeof v === "string") {
+    // Redact anything that looks sensitive even if it slipped through.
+    if (SENSITIVE_KEY_RE.test(v)) return "[redacted]";
+    return v.length > 200 ? v.slice(0, 200) + "…" : v;
+  }
+  if (typeof v === "number") return String(v);
+  try {
+    const s = JSON.stringify(v);
+    return s.length > 200 ? s.slice(0, 200) + "…" : s;
+  } catch {
+    return "unknown";
+  }
+};
+
+const buildTelegramSummary = (
+  health: BridgeCallResult,
+  status: BridgeCallResult,
+  logs: BridgeCallResult,
+): string => {
+  // Try to locate a "telegram" sub-object first; fall back to root scans.
+  const sources: unknown[] = [];
+  for (const c of [health, status]) {
+    const tg = deepFind(c.body, [/^telegram$/i, /^tg$/i]);
+    if (tg) sources.push(tg);
+    sources.push(c.body); // also allow root-level keys
+  }
+
+  const find = (...keys: RegExp[]) => {
+    for (const src of sources) {
+      const v = deepFind(src, keys);
+      if (v !== undefined) return v;
+    }
+    return undefined;
+  };
+
+  const configured = find(/^(telegram[_-]?)?configured$/i, /^enabled$/i, /^is[_-]?configured$/i);
+  const username   = find(/^bot[_-]?username$/i, /^username$/i, /^bot$/i);
+  const running    = find(/^running$/i, /^is[_-]?running$/i, /^alive$/i, /^active$/i);
+  const lastProbe  = find(/^last[_-]?probe$/i, /^last[_-]?check$/i, /^probed[_-]?at$/i, /^last[_-]?seen$/i);
+  const lastError  = find(/^last[_-]?error$/i, /^error$/i, /^last[_-]?err$/i);
+  const webhookUrl = find(/^webhook[_-]?url$/i, /^webhook$/i);
+  const canJoin    = find(/^can[_-]?join[_-]?groups$/i);
+  const canReadAll = find(/^can[_-]?read[_-]?all[_-]?group[_-]?messages$/i);
+
+  // Final verdict.
+  let verdict: "OK" | "WARNING" | "ERROR" = "OK";
+  if (!health.ok || !status.ok) verdict = "WARNING";
+  if (configured === false) verdict = "WARNING";
+  if (running === false) verdict = "WARNING";
+  if (lastError && typeof lastError === "string" && lastError.trim() !== "") verdict = "ERROR";
+
+  const lines = [
+    `TELEGRAM STATUS :: ${verdict}`,
+    "",
+    `  configured            : ${fmt(configured)}`,
+    `  bot username          : ${fmt(username)}`,
+    `  running               : ${fmt(running)}`,
+    `  last probe            : ${fmt(lastProbe)}`,
+    `  last error            : ${fmt(lastError)}`,
+    `  webhook url           : ${webhookUrl ? "present" : "unknown"}`,
+    `  can join groups       : ${fmt(canJoin)}`,
+    `  can read all messages : ${fmt(canReadAll)}`,
+    "",
+    `  sources :: health HTTP ${health.status} · status HTTP ${status.status} · logs HTTP ${logs.status}`,
+  ];
+  return lines.join("\n");
 };
 
 Deno.serve(async (req) => {
@@ -162,12 +266,12 @@ Deno.serve(async (req) => {
     if (!action) {
       reply = [
         "UNRECOGNIZED COMMAND :: no matching bridge endpoint.",
-        "Available actions: health, system, gateway-status, status, logs, diagnostic.",
+        "Available actions: health, system, gateway-status, status, logs, diagnostic, telegram-status.",
         `> ${body.command.trim()}`,
       ].join("\n");
     } else if (action === "diagnostic") {
       // Full Diagnostic: run health + system + gateway-status + status in parallel.
-      const order: Array<Exclude<BridgeAction, "diagnostic">> = [
+      const order: Array<Exclude<BridgeAction, "diagnostic" | "telegram-status">> = [
         "health", "system", "gateway-status", "status",
       ];
       calls = await Promise.all(
@@ -179,6 +283,16 @@ Deno.serve(async (req) => {
         "",
         ...calls.map((c, i) => formatResult(order[i].toUpperCase(), c)),
       ].join("\n\n");
+    } else if (action === "telegram-status") {
+      // Telegram status :: composes data from health + status + logs(100).
+      // No new bridge endpoint needed; never exposes tokens or headers.
+      const [h, s, l] = await Promise.all([
+        callBridge(VPS_BASE, "/api/openclaw/health", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/status", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/logs?lines=100", bridgeToken),
+      ]);
+      calls = [h, s, l];
+      reply = buildTelegramSummary(h, s, l);
     } else {
       const path = BRIDGE_ROUTES[action];
       const r = await callBridge(VPS_BASE, path, bridgeToken);
