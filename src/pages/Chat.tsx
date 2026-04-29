@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Send, Zap, FileText, Bot, User, HeartPulse, Cpu, Radio, Activity } from "lucide-react";
+import { Send, Zap, Bot, User, HeartPulse, Cpu, Radio, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useOperator } from "@/hooks/useOperator";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import SystemLogsPanel from "@/components/SystemLogsPanel";
 
 type Msg = { id: string; role: "operator" | "agent"; content: string; created_at: string };
 
@@ -105,7 +106,6 @@ const Chat = () => {
   // Quick actions map UI buttons → explicit bridge actions (no NL parsing).
   const quickActions: { label: string; icon: typeof Zap; cmd: string; action: BridgeAction }[] = [
     { label: "Full Diagnostic", icon: Zap,        cmd: "Run full diagnostic sweep.",     action: "diagnostic"     },
-    { label: "System Logs",     icon: FileText,   cmd: "Fetch last 50 system logs.",      action: "logs"           },
     { label: "Health Check",    icon: HeartPulse, cmd: "Bridge health check.",            action: "health"         },
     { label: "System Status",   icon: Cpu,        cmd: "Read system snapshot.",           action: "system"         },
     { label: "Gateway Status",  icon: Radio,      cmd: "Read gateway link status.",       action: "gateway-status" },
@@ -187,6 +187,7 @@ const Chat = () => {
       {/* Quick actions + command bar */}
       <div className="border-t border-border bg-surface/80 backdrop-blur">
         <div className="mx-auto max-w-3xl space-y-2 p-3">
+          <SystemLogsPanel />
           <div className="flex flex-wrap gap-2">
             {quickActions.map((q) => (
               <button
