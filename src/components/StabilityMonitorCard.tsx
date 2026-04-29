@@ -307,9 +307,11 @@ const StabilityMonitorCard = () => {
             : "No critical errors found",
         anyResourceCritical
           ? "System resources HIGH"
-          : anyResourceWarn
-            ? "System resources elevated"
-            : "System resources normal",
+          : ram === null && cpuV === "OK" && diskV === "OK"
+            ? "RAM usage unknown — CPU and Disk normal"
+            : anyResourceWarn
+              ? "System resources elevated"
+              : "System resources normal",
       ];
 
       setSnap({
