@@ -18,6 +18,71 @@ type BridgeAction =
   | "gateway-status"
   | "status";
 
+// SECURE COMMAND MAP :: only these inputs are allowed. Anything else is
+// rejected locally without ever reaching the bridge or VPS.
+const COMMAND_HELP = [
+  "UNRECOGNIZED COMMAND :: input rejected by command guard.",
+  "",
+  "ALLOWED COMMANDS:",
+  "  health      | /health        → bridge health check",
+  "  system      | /system        → system snapshot",
+  "  gateway     | /gateway       → gateway link status",
+  "  status      | /status        → general agent status",
+  "  logs        | /logs          → recent system logs",
+  "  diagnostic  | /diagnostic    → full diagnostic sweep",
+  "  telegram    | /telegram      → telegram bridge status",
+  "",
+  "NATURAL PHRASES ACCEPTED:",
+  "  \"check health\", \"system status\", \"gateway status\",",
+  "  \"show logs\", \"full diagnostic\", \"check telegram\".",
+].join("\n");
+
+const TELEGRAM_NOT_IMPLEMENTED = [
+  "TELEGRAM STATUS :: NOT IMPLEMENTED",
+  "",
+  "The telegram-status endpoint is not wired into the bridge yet.",
+  "It will be enabled in a future update.",
+].join("\n");
+
+type ResolvedCommand =
+  | { kind: "action"; action: BridgeAction; label: string }
+  | { kind: "local"; reply: string };
+
+const resolveCommand = (raw: string): ResolvedCommand => {
+  const c = raw.trim().toLowerCase().replace(/^\/+/, "");
+  if (!c) return { kind: "local", reply: COMMAND_HELP };
+
+  // Diagnostic
+  if (/^(diagnostic|full[\s_-]*diagnostic|sweep|full[\s_-]*scan)$/.test(c))
+    return { kind: "action", action: "diagnostic", label: "Full Diagnostic" };
+
+  // Logs
+  if (/^(logs?|show[\s_-]+logs?|tail[\s_-]+logs?)$/.test(c))
+    return { kind: "action", action: "logs", label: "System Logs" };
+
+  // Gateway
+  if (/^(gateway|gateway[\s_-]*status|check[\s_-]+gateway)$/.test(c))
+    return { kind: "action", action: "gateway-status", label: "Gateway Status" };
+
+  // Health
+  if (/^(health|check[\s_-]+health|ping|alive)$/.test(c))
+    return { kind: "action", action: "health", label: "Health Check" };
+
+  // System
+  if (/^(system|system[\s_-]*status|check[\s_-]+system)$/.test(c))
+    return { kind: "action", action: "system", label: "System Status" };
+
+  // Status (general)
+  if (/^(status|general[\s_-]*status|agent[\s_-]*status)$/.test(c))
+    return { kind: "action", action: "status", label: "General Status" };
+
+  // Telegram (not implemented yet)
+  if (/^(telegram|telegram[\s_-]*status|check[\s_-]+telegram)$/.test(c))
+    return { kind: "local", reply: TELEGRAM_NOT_IMPLEMENTED };
+
+  return { kind: "local", reply: COMMAND_HELP };
+};
+
 const Chat = () => {
   const { user } = useAuth();
   const { activeModel } = useOperator();
