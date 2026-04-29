@@ -82,10 +82,72 @@ const findNumberPercent = (body: unknown, keyRe: RegExp): number | null => {
 };
 
 const extractCpu = (body: unknown) => findNumberPercent(body, /^(cpu(_|-)?(percent|usage|pct)?|cpuLoad)$/i);
-const extractRam = (body: unknown) =>
-  findNumberPercent(body, /^(ram|mem(ory)?)(_|-)?(percent|usage|used|pct)?$/i);
 const extractDisk = (body: unknown) =>
   findNumberPercent(body, /^(disk|storage)(_|-)?(percent|usage|used|pct)?$/i);
+
+const toNum = (v: unknown): number | null => {
+  if (typeof v === "number" && isFinite(v)) return v;
+  if (typeof v === "string") {
+    const m = v.match(/-?\d+(?:\.\d+)?/);
+    if (m) return parseFloat(m[0]);
+  }
+  return null;
+};
+
+// RAM extractor with priority:
+// 1) explicit valid percent field (0-100, or 0-1 ratio)
+// 2) used/total ratio
+// 3) reject anything else as "unknown" — never expose raw bytes as %.
+const extractRam = (body: unknown): number | null => {
+  if (!body || typeof body !== "object") return null;
+
+  let percent: number | null = null;
+  let used: number | null = null;
+  let total: number | null = null;
+
+  walk(body, (k, v) => {
+    const key = k.toLowerCase();
+    const isMemScope = /(^|_)(ram|mem(ory)?)(_|$)/.test(key) || ["memory", "mem", "ram"].includes(key);
+    // Match nested objects like `memory: { used, total, percent }`
+    if (isMemScope && v && typeof v === "object") {
+      const obj = v as Record<string, unknown>;
+      const p = toNum(obj.percent ?? obj.pct ?? obj.usage_percent ?? obj.usagePercent);
+      const u = toNum(obj.used ?? obj.used_bytes ?? obj.usedBytes);
+      const t = toNum(obj.total ?? obj.total_bytes ?? obj.totalBytes);
+      if (percent === null && p !== null) percent = p;
+      if (used === null && u !== null) used = u;
+      if (total === null && t !== null) total = t;
+    }
+    // Flat keys
+    if (percent === null && /^(ram|mem(ory)?)(_|-)?(percent|pct|usage_percent)$/i.test(k)) {
+      const n = toNum(v);
+      if (n !== null) percent = n;
+    }
+    if (used === null && /^(ram|mem(ory)?)(_|-)?(used|used_bytes)$/i.test(k)) {
+      const n = toNum(v);
+      if (n !== null) used = n;
+    }
+    if (total === null && /^(ram|mem(ory)?)(_|-)?(total|total_bytes)$/i.test(k)) {
+      const n = toNum(v);
+      if (n !== null) total = n;
+    }
+  });
+
+  // 1) Use explicit percent if it looks valid.
+  if (percent !== null) {
+    const p = percent <= 1 && percent >= 0 ? percent * 100 : percent;
+    if (p >= 0 && p <= 100) return Math.round(p * 10) / 10;
+  }
+
+  // 2) Fall back to used/total.
+  if (used !== null && total !== null && total > 0) {
+    const p = (used / total) * 100;
+    if (p >= 0 && p <= 100) return Math.round(p * 10) / 10;
+  }
+
+  // 3) Anything else → unknown (do NOT report raw bytes as %).
+  return null;
+};
 
 // Parse telegram verdict from the reply text (cheap & safe).
 const parseTelegramVerdict = (reply: string | undefined): TgVerdict => {
