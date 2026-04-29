@@ -90,6 +90,29 @@ const parseLine = (line: string): ParsedLog => {
   };
 };
 
+// Friendly translations for known noisy / misleading log patterns.
+// Returns a human-readable label and a soft severity override so they don't
+// get flagged as critical errors.
+type FriendlyHit = { label: string; level: "INFO" | "WARNING" };
+
+const FRIENDLY_PATTERNS: Array<{ re: RegExp; hit: FriendlyHit }> = [
+  {
+    re: /telegram[^\n]{0,40}send[_-]?message[^\n]{0,20}\bok\b/i,
+    hit: { label: "Telegram message sent successfully", level: "INFO" },
+  },
+  {
+    re: /session maintenance would evict active session;?\s*skipping enforcement/i,
+    hit: { label: "Telegram session active — maintenance skipped eviction", level: "WARNING" },
+  },
+];
+
+const friendlyFor = (text: string): FriendlyHit | null => {
+  for (const { re, hit } of FRIENDLY_PATTERNS) {
+    if (re.test(text)) return hit;
+  }
+  return null;
+};
+
 const levelClass = (level?: string): string => {
   if (!level) return "border-border bg-surface-2 text-muted-foreground";
   const l = level.toUpperCase();
