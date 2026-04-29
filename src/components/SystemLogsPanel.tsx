@@ -90,6 +90,29 @@ const parseLine = (line: string): ParsedLog => {
   };
 };
 
+// Friendly translations for known noisy / misleading log patterns.
+// Returns a human-readable label and a soft severity override so they don't
+// get flagged as critical errors.
+type FriendlyHit = { label: string; level: "INFO" | "WARNING" };
+
+const FRIENDLY_PATTERNS: Array<{ re: RegExp; hit: FriendlyHit }> = [
+  {
+    re: /telegram[^\n]{0,40}send[_-]?message[^\n]{0,20}\bok\b/i,
+    hit: { label: "Telegram message sent successfully", level: "INFO" },
+  },
+  {
+    re: /session maintenance would evict active session;?\s*skipping enforcement/i,
+    hit: { label: "Telegram session active — maintenance skipped eviction", level: "WARNING" },
+  },
+];
+
+const friendlyFor = (text: string): FriendlyHit | null => {
+  for (const { re, hit } of FRIENDLY_PATTERNS) {
+    if (re.test(text)) return hit;
+  }
+  return null;
+};
+
 const levelClass = (level?: string): string => {
   if (!level) return "border-border bg-surface-2 text-muted-foreground";
   const l = level.toUpperCase();
@@ -315,15 +338,51 @@ const SystemLogsPanel = () => {
                 {visible.map((line, i) => {
                   const p = parseLine(line);
                   const idx = String(i + 1).padStart(3, "0");
+                  const friendly = friendlyFor(p.message ?? line);
+
+                  // Color helper that respects the friendly override.
+                  const friendlyTextClass = friendly
+                    ? friendly.level === "WARNING"
+                      ? "text-yellow-400"
+                      : "text-green-neon"
+                    : null;
 
                   if (!p.json) {
                     return (
                       <li
                         key={i}
-                        className="flex gap-2 rounded border border-border/40 bg-surface-2/40 px-2 py-1.5 font-mono text-[11px] leading-relaxed"
+                        className="rounded border border-border/40 bg-surface-2/40 px-2 py-1.5 font-mono text-[11px] leading-relaxed"
                       >
-                        <span className="select-none text-muted-foreground/60">{idx}</span>
-                        <span className={cn("break-words", lineClass(line))}>{line}</span>
+                        <div className="flex gap-2">
+                          <span className="select-none text-muted-foreground/60">{idx}</span>
+                          {friendly ? (
+                            <div className="flex-1">
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <span
+                                  className={cn(
+                                    "rounded border px-1.5 py-0 text-[9px] uppercase tracking-widest",
+                                    levelClass(friendly.level),
+                                  )}
+                                >
+                                  {friendly.level}
+                                </span>
+                                <span className={cn("break-words", friendlyTextClass)}>
+                                  {friendly.label}
+                                </span>
+                              </div>
+                              <details className="mt-1">
+                                <summary className="cursor-pointer text-[9px] uppercase tracking-widest text-muted-foreground hover:text-cyan">
+                                  + raw
+                                </summary>
+                                <pre className="mt-1 overflow-x-auto rounded bg-black/40 p-1.5 text-[10px] text-foreground/70 scrollbar-thin">
+{line}
+                                </pre>
+                              </details>
+                            </div>
+                          ) : (
+                            <span className={cn("break-words", lineClass(line))}>{line}</span>
+                          )}
+                        </div>
                       </li>
                     );
                   }
@@ -339,6 +398,7 @@ const SystemLogsPanel = () => {
                     Object.entries(p.json).filter(([k]) => !knownKeys.has(k)),
                   );
                   const hasExtras = Object.keys(extras).length > 0;
+                  const displayLevel = friendly?.level ?? p.level;
 
                   return (
                     <li
@@ -350,14 +410,14 @@ const SystemLogsPanel = () => {
                         {p.timestamp && (
                           <span className="text-[10px] text-muted-foreground/80">{p.timestamp}</span>
                         )}
-                        {p.level && (
+                        {displayLevel && (
                           <span
                             className={cn(
                               "rounded border px-1.5 py-0 text-[9px] uppercase tracking-widest",
-                              levelClass(p.level),
+                              levelClass(displayLevel),
                             )}
                           >
-                            {p.level}
+                            {displayLevel}
                           </span>
                         )}
                         {p.module && (
@@ -366,23 +426,31 @@ const SystemLogsPanel = () => {
                           </span>
                         )}
                       </div>
-                      {p.message && (
-                        <p className={cn("mt-1 break-words leading-relaxed", lineClass(p.message))}>
-                          {p.message}
+                      {friendly ? (
+                        <p className={cn("mt-1 break-words leading-relaxed", friendlyTextClass)}>
+                          {friendly.label}
                         </p>
+                      ) : (
+                        p.message && (
+                          <p className={cn("mt-1 break-words leading-relaxed", lineClass(p.message))}>
+                            {p.message}
+                          </p>
+                        )
                       )}
                       {p.source && (
                         <p className="mt-0.5 truncate text-[10px] text-muted-foreground/70">
                           ↳ {p.source}
                         </p>
                       )}
-                      {hasExtras && (
+                      {(hasExtras || friendly) && (
                         <details className="mt-1">
                           <summary className="cursor-pointer text-[9px] uppercase tracking-widest text-muted-foreground hover:text-cyan">
-                            + meta ({Object.keys(extras).length})
+                            {friendly
+                              ? `+ raw json${hasExtras ? ` (${Object.keys(extras).length} meta)` : ""}`
+                              : `+ meta (${Object.keys(extras).length})`}
                           </summary>
                           <pre className="mt-1 overflow-x-auto rounded bg-black/40 p-1.5 text-[10px] text-foreground/70 scrollbar-thin">
-{JSON.stringify(extras, null, 2)}
+{JSON.stringify(friendly ? p.json : extras, null, 2)}
                           </pre>
                         </details>
                       )}
