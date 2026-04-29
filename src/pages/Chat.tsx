@@ -109,8 +109,22 @@ const Chat = () => {
 
   const send = async (text: string, action?: BridgeAction) => {
     if (!user || !text.trim() || sending) return;
-    setSending(true);
     const cmd = text.trim();
+
+    // If no explicit action (i.e. typed input), run it through the secure
+    // command guard. Free-form text is NEVER forwarded to the VPS.
+    let resolvedAction: BridgeAction | undefined = action;
+    let localReply: string | null = null;
+    if (!action) {
+      const resolved = resolveCommand(cmd);
+      if (resolved.kind === "action") {
+        resolvedAction = resolved.action;
+      } else {
+        localReply = resolved.reply;
+      }
+    }
+
+    setSending(true);
     setInput("");
 
     // Optimistic operator message
