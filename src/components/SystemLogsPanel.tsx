@@ -311,15 +311,84 @@ const SystemLogsPanel = () => {
                 No matching log lines
               </p>
             ) : (
-              <ul className="space-y-0.5 font-mono text-[11px] leading-relaxed">
-                {visible.map((line, i) => (
-                  <li key={i} className="flex gap-2">
-                    <span className="select-none text-muted-foreground/60">
-                      {String(i + 1).padStart(3, "0")}
-                    </span>
-                    <span className={cn("break-words", lineClass(line))}>{line}</span>
-                  </li>
-                ))}
+              <ul className="space-y-1.5">
+                {visible.map((line, i) => {
+                  const p = parseLine(line);
+                  const idx = String(i + 1).padStart(3, "0");
+
+                  if (!p.json) {
+                    return (
+                      <li
+                        key={i}
+                        className="flex gap-2 rounded border border-border/40 bg-surface-2/40 px-2 py-1.5 font-mono text-[11px] leading-relaxed"
+                      >
+                        <span className="select-none text-muted-foreground/60">{idx}</span>
+                        <span className={cn("break-words", lineClass(line))}>{line}</span>
+                      </li>
+                    );
+                  }
+
+                  const knownKeys = new Set([
+                    "timestamp", "time", "ts", "@timestamp", "date",
+                    "logLevelName", "level", "severity", "lvl",
+                    "module", "logger", "component", "service", "name",
+                    "message", "msg", "event", "text", "description",
+                    "path", "source", "file", "location", "url",
+                  ]);
+                  const extras = Object.fromEntries(
+                    Object.entries(p.json).filter(([k]) => !knownKeys.has(k)),
+                  );
+                  const hasExtras = Object.keys(extras).length > 0;
+
+                  return (
+                    <li
+                      key={i}
+                      className="rounded border border-border/40 bg-surface-2/40 px-2.5 py-1.5 font-mono text-[11px]"
+                    >
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="select-none text-muted-foreground/60">{idx}</span>
+                        {p.timestamp && (
+                          <span className="text-[10px] text-muted-foreground/80">{p.timestamp}</span>
+                        )}
+                        {p.level && (
+                          <span
+                            className={cn(
+                              "rounded border px-1.5 py-0 text-[9px] uppercase tracking-widest",
+                              levelClass(p.level),
+                            )}
+                          >
+                            {p.level}
+                          </span>
+                        )}
+                        {p.module && (
+                          <span className="rounded border border-cyan/30 bg-cyan/5 px-1.5 py-0 text-[9px] uppercase tracking-widest text-cyan">
+                            {p.module}
+                          </span>
+                        )}
+                      </div>
+                      {p.message && (
+                        <p className={cn("mt-1 break-words leading-relaxed", lineClass(p.message))}>
+                          {p.message}
+                        </p>
+                      )}
+                      {p.source && (
+                        <p className="mt-0.5 truncate text-[10px] text-muted-foreground/70">
+                          ↳ {p.source}
+                        </p>
+                      )}
+                      {hasExtras && (
+                        <details className="mt-1">
+                          <summary className="cursor-pointer text-[9px] uppercase tracking-widest text-muted-foreground hover:text-cyan">
+                            + meta ({Object.keys(extras).length})
+                          </summary>
+                          <pre className="mt-1 overflow-x-auto rounded bg-black/40 p-1.5 text-[10px] text-foreground/70 scrollbar-thin">
+{JSON.stringify(extras, null, 2)}
+                          </pre>
+                        </details>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
