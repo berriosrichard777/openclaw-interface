@@ -15,6 +15,91 @@ const ERROR_RE = /\b(error|err|fail|failed|failure|fatal|exception|critical|pani
 const WARN_RE = /\b(warn|warning|deprecated|retry|timeout)\b/i;
 const OK_RE = /\b(ok|success|succeeded|ready|online|healthy|started|connected)\b/i;
 
+// Keys to strip from rendered JSON to avoid leaking secrets in the UI.
+const SENSITIVE_KEYS = /^(authorization|auth|token|access_token|refresh_token|api_key|apikey|x-api-key|x-gateway-token|secret|password|cookie|set-cookie|bearer)$/i;
+
+type ParsedLog = {
+  raw: string;
+  json: Record<string, unknown> | null;
+  timestamp?: string;
+  level?: string;
+  module?: string;
+  message?: string;
+  source?: string;
+};
+
+const pick = (obj: Record<string, unknown>, keys: string[]): string | undefined => {
+  for (const k of keys) {
+    const v = obj[k];
+    if (v != null && v !== "") return typeof v === "string" ? v : JSON.stringify(v);
+  }
+  return undefined;
+};
+
+const sanitize = (obj: Record<string, unknown>): Record<string, unknown> => {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (SENSITIVE_KEYS.test(k)) {
+      out[k] = "••• redacted •••";
+    } else if (v && typeof v === "object" && !Array.isArray(v)) {
+      out[k] = sanitize(v as Record<string, unknown>);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+};
+
+const parseLine = (line: string): ParsedLog => {
+  const trimmed = line.trim();
+  // Try direct JSON parse
+  let json: Record<string, unknown> | null = null;
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        json = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Try to extract first {...} substring
+      const m = trimmed.match(/\{[\s\S]*\}/);
+      if (m) {
+        try {
+          const parsed = JSON.parse(m[0]);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            json = parsed as Record<string, unknown>;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  if (!json) return { raw: line, json: null };
+
+  const safe = sanitize(json);
+  return {
+    raw: line,
+    json: safe,
+    timestamp: pick(safe, ["timestamp", "time", "ts", "@timestamp", "date"]),
+    level: pick(safe, ["logLevelName", "level", "severity", "lvl"]),
+    module: pick(safe, ["module", "logger", "component", "service", "name"]),
+    message: pick(safe, ["message", "msg", "event", "text", "description"]),
+    source: pick(safe, ["path", "source", "file", "location", "url"]),
+  };
+};
+
+const levelClass = (level?: string): string => {
+  if (!level) return "border-border bg-surface-2 text-muted-foreground";
+  const l = level.toUpperCase();
+  if (/ERROR|FATAL|CRITICAL|PANIC/.test(l)) return "border-destructive/50 bg-destructive/15 text-destructive";
+  if (/WARN/.test(l)) return "border-yellow-400/40 bg-yellow-400/10 text-yellow-400";
+  if (/INFO|OK|SUCCESS/.test(l)) return "border-green-neon/40 bg-green-neon/10 text-green-neon";
+  if (/DEBUG|TRACE/.test(l)) return "border-cyan/40 bg-cyan/10 text-cyan";
+  return "border-border bg-surface-2 text-muted-foreground";
+};
+
 const matchesFilter = (line: string, f: Filter): boolean => {
   if (f === "ALL") return true;
   if (f === "ERRORS") return ERROR_RE.test(line);
@@ -226,15 +311,84 @@ const SystemLogsPanel = () => {
                 No matching log lines
               </p>
             ) : (
-              <ul className="space-y-0.5 font-mono text-[11px] leading-relaxed">
-                {visible.map((line, i) => (
-                  <li key={i} className="flex gap-2">
-                    <span className="select-none text-muted-foreground/60">
-                      {String(i + 1).padStart(3, "0")}
-                    </span>
-                    <span className={cn("break-words", lineClass(line))}>{line}</span>
-                  </li>
-                ))}
+              <ul className="space-y-1.5">
+                {visible.map((line, i) => {
+                  const p = parseLine(line);
+                  const idx = String(i + 1).padStart(3, "0");
+
+                  if (!p.json) {
+                    return (
+                      <li
+                        key={i}
+                        className="flex gap-2 rounded border border-border/40 bg-surface-2/40 px-2 py-1.5 font-mono text-[11px] leading-relaxed"
+                      >
+                        <span className="select-none text-muted-foreground/60">{idx}</span>
+                        <span className={cn("break-words", lineClass(line))}>{line}</span>
+                      </li>
+                    );
+                  }
+
+                  const knownKeys = new Set([
+                    "timestamp", "time", "ts", "@timestamp", "date",
+                    "logLevelName", "level", "severity", "lvl",
+                    "module", "logger", "component", "service", "name",
+                    "message", "msg", "event", "text", "description",
+                    "path", "source", "file", "location", "url",
+                  ]);
+                  const extras = Object.fromEntries(
+                    Object.entries(p.json).filter(([k]) => !knownKeys.has(k)),
+                  );
+                  const hasExtras = Object.keys(extras).length > 0;
+
+                  return (
+                    <li
+                      key={i}
+                      className="rounded border border-border/40 bg-surface-2/40 px-2.5 py-1.5 font-mono text-[11px]"
+                    >
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="select-none text-muted-foreground/60">{idx}</span>
+                        {p.timestamp && (
+                          <span className="text-[10px] text-muted-foreground/80">{p.timestamp}</span>
+                        )}
+                        {p.level && (
+                          <span
+                            className={cn(
+                              "rounded border px-1.5 py-0 text-[9px] uppercase tracking-widest",
+                              levelClass(p.level),
+                            )}
+                          >
+                            {p.level}
+                          </span>
+                        )}
+                        {p.module && (
+                          <span className="rounded border border-cyan/30 bg-cyan/5 px-1.5 py-0 text-[9px] uppercase tracking-widest text-cyan">
+                            {p.module}
+                          </span>
+                        )}
+                      </div>
+                      {p.message && (
+                        <p className={cn("mt-1 break-words leading-relaxed", lineClass(p.message))}>
+                          {p.message}
+                        </p>
+                      )}
+                      {p.source && (
+                        <p className="mt-0.5 truncate text-[10px] text-muted-foreground/70">
+                          ↳ {p.source}
+                        </p>
+                      )}
+                      {hasExtras && (
+                        <details className="mt-1">
+                          <summary className="cursor-pointer text-[9px] uppercase tracking-widest text-muted-foreground hover:text-cyan">
+                            + meta ({Object.keys(extras).length})
+                          </summary>
+                          <pre className="mt-1 overflow-x-auto rounded bg-black/40 p-1.5 text-[10px] text-foreground/70 scrollbar-thin">
+{JSON.stringify(extras, null, 2)}
+                          </pre>
+                        </details>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
