@@ -146,6 +146,21 @@ const Chat = () => {
         model_slug: activeModel?.slug ?? null,
       });
 
+      // Local rejection / not-implemented path → never call the bridge.
+      if (localReply !== null) {
+        await supabase.from("chat_messages").insert({
+          user_id: user.id,
+          role: "agent",
+          content: localReply,
+          model_slug: activeModel?.slug ?? null,
+        });
+        setMessages((m) => [
+          ...m,
+          { id: crypto.randomUUID(), role: "agent", content: localReply!, created_at: new Date().toISOString() },
+        ]);
+        return;
+      }
+
       // Get enabled skills
       const { data: ops } = await supabase
         .from("operator_skills")
@@ -159,7 +174,7 @@ const Chat = () => {
       // Invoke edge function. The bridge token is read server-side ONLY,
       // from the OPENCLAW_BRIDGE_TOKEN secret. The frontend never handles it.
       const { data, error } = await supabase.functions.invoke("openclaw-agent", {
-        body: { command: cmd, model: activeModel?.slug, skills, action },
+        body: { command: cmd, model: activeModel?.slug, skills, action: resolvedAction },
       });
       if (error) throw error;
 
