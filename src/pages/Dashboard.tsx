@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import BridgeTestCard from "@/components/BridgeTestCard";
+import StabilityMonitorCard from "@/components/StabilityMonitorCard";
 
 const Stat = ({
   label,
@@ -80,6 +81,8 @@ const Dashboard = () => {
       </section>
 
       <BridgeTestCard />
+
+      <StabilityMonitorCard />
 
       <section className="grid gap-3 sm:grid-cols-3">
         <Link
