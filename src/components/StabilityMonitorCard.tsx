@@ -271,11 +271,18 @@ const StabilityMonitorCard = () => {
       const warningInLogs = /\b(warn|warning|degraded)\b/i.test(logsText);
       if (criticalInLogs) errs.push("Critical markers in recent logs");
 
-      const resourceVerdicts = [pctVerdict(cpu), pctVerdict(ram), pctVerdict(disk)];
+      // Resource verdicts: unknown = WARNING (not CRITICAL).
+      const cpuV = pctVerdict(cpu);
+      const ramV = pctVerdict(ram);
+      const diskV = pctVerdict(disk);
+      const resourceVerdicts = [cpuV, ramV, diskV];
       const anyResourceCritical = resourceVerdicts.includes("CRITICAL");
-      const anyResourceWarn = resourceVerdicts.includes("WARNING");
+      const anyResourceWarn =
+        resourceVerdicts.includes("WARNING") || resourceVerdicts.includes("UNKNOWN");
 
       // Overall verdict logic
+      // CRITICAL only if Bridge/System/Gateway fail or a real resource is critical.
+      // Telegram PARTIAL OK / unknown RAM only escalate to WARNING.
       let overall: Verdict = "OK";
       if (!bridgeOnline || !systemOk || gatewayVerdict === "CRITICAL" || tgVerdict === "ERROR" || anyResourceCritical) {
         overall = "CRITICAL";
