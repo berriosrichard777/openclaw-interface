@@ -16,7 +16,8 @@ type BridgeAction =
   | "health"
   | "system"
   | "gateway-status"
-  | "status";
+  | "status"
+  | "telegram-status";
 
 // SECURE COMMAND MAP :: only these inputs are allowed. Anything else is
 // rejected locally without ever reaching the bridge or VPS.
