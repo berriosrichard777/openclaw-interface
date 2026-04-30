@@ -620,27 +620,35 @@ Deno.serve(async (req) => {
 
     if (!action) {
       reply = [
-        "UNRECOGNIZED COMMAND :: no matching bridge endpoint.",
-        "Available actions: health, system, gateway-status, status, logs, diagnostic, telegram-status.",
-        `> ${body.command.trim()}`,
+        "UNRECOGNIZED COMMAND ::",
+        "  I couldn't map that to a safe diagnostic intent.",
+        "",
+        "  Try: 'check health', 'system status', 'gateway', 'logs',",
+        "  'full diagnostic', 'telegram status', 'stability', 'alerts'.",
+        "",
+        "  (Free-form commands to the VPS, shell, Docker, Cloudflare or",
+        "  filesystem are intentionally disabled. Read-only diagnostics only.)",
       ].join("\n");
     } else if (action === "diagnostic") {
-      // Full Diagnostic: run health + system + gateway-status + status in parallel.
-      const order: Array<Exclude<BridgeAction, "diagnostic" | "telegram-status">> = [
+      const order: Array<Exclude<BridgeAction, "diagnostic" | "telegram-status" | "stability" | "alerts">> = [
         "health", "system", "gateway-status", "status",
       ];
       calls = await Promise.all(
         order.map((a) => callBridge(VPS_BASE, BRIDGE_ROUTES[a], bridgeToken)),
       );
       const allOk = calls.every((c) => c.ok);
-      reply = [
-        `FULL DIAGNOSTIC :: ${allOk ? "ALL SYSTEMS GREEN" : "ISSUES DETECTED"}`,
-        "",
-        ...calls.map((c, i) => formatResult(order[i].toUpperCase(), c)),
-      ].join("\n\n");
+      const head = `FULL DIAGNOSTIC :: ${allOk ? "ALL SYSTEMS GREEN" : "ISSUES DETECTED"}`;
+      const summary = allOk
+        ? "  Bridge, system, gateway and status all responded cleanly."
+        : "  One or more probes failed — review the per-endpoint detail below.";
+      const nextStep = allOk
+        ? ""
+        : "\n  Next step: run 'stability' for the consolidated verdict, or 'alerts' for actionable items.";
+      const tail = wantsRaw
+        ? "\n\nRAW ::\n" + calls.map((c, i) => formatResult(order[i].toUpperCase(), c)).join("\n\n")
+        : "\n\n  (type 'details' or 'raw' to see the technical payload)";
+      reply = `${head}\n\n${summary}${nextStep}${tail}`;
     } else if (action === "telegram-status") {
-      // Telegram status :: composes data from health + status + logs(100).
-      // No new bridge endpoint needed; never exposes tokens or headers.
       const [h, s, l] = await Promise.all([
         callBridge(VPS_BASE, "/api/openclaw/health", bridgeToken),
         callBridge(VPS_BASE, "/api/openclaw/status", bridgeToken),
@@ -648,11 +656,33 @@ Deno.serve(async (req) => {
       ]);
       calls = [h, s, l];
       reply = buildTelegramSummary(h, s, l);
+      if (wantsRaw) {
+        reply += "\n\nRAW ::\n" + calls.map((c) => formatResult(c.endpoint, c)).join("\n\n");
+      }
+    } else if (action === "stability" || action === "alerts") {
+      const [h, sys, gw, tg, lg] = await Promise.all([
+        callBridge(VPS_BASE, "/api/openclaw/health", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/system", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/gateway-status", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/status", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/logs?lines=100", bridgeToken),
+      ]);
+      calls = [h, sys, gw, tg, lg];
+      reply = action === "stability"
+        ? buildStabilitySummary(h, sys, gw, tg, lg)
+        : buildAlertsSummary(h, sys, gw, tg, lg);
+      if (wantsRaw) {
+        reply += "\n\nRAW ::\n" + calls.map((c) => formatResult(c.endpoint, c)).join("\n\n");
+      }
     } else {
       const path = BRIDGE_ROUTES[action];
       const r = await callBridge(VPS_BASE, path, bridgeToken);
       calls = [r];
-      reply = formatResult(action.toUpperCase(), r);
+      // When the UI passes an explicit action (button click), keep the raw
+      // formatted output to preserve existing diagnostic panels.
+      reply = body.action
+        ? formatResult(action.toUpperCase(), r)
+        : naturalize(action, r, wantsRaw);
     }
 
     // Log a TERMINAL event for traceability (never includes the token).
