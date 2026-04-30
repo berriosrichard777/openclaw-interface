@@ -85,6 +85,8 @@ const Dashboard = () => {
 
       <StabilityMonitorCard />
 
+      <AlertCenterCard />
+
       <section className="grid gap-3 sm:grid-cols-3">
         <Link
           to="/models"
