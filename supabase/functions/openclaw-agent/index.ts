@@ -372,6 +372,36 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Caller asked for verbose/raw output ("details", "raw", "verbose", "json").
+    const wantsRaw = !body.action && /\b(details?|raw|verbose|json|technical)\b/i.test(body.command);
+
+    // SECURITY GUARD :: forbidden intents are rejected locally and never
+    // forwarded to the VPS bridge. Only safe read-only diagnostics are allowed.
+    if (!body.action && isForbidden(body.command)) {
+      const refusal =
+        "REQUEST BLOCKED ::\n" +
+        "  This action is not allowed from Command Chat. Only safe read-only " +
+        "diagnostics are enabled.\n\n" +
+        "  Allowed intents :: health · system · gateway · logs · diagnostic · " +
+        "telegram · stability · alerts.";
+      await supabase.from("activity_logs").insert({
+        user_id: userId,
+        source: "TERMINAL",
+        level: "WARN",
+        message: `blocked :: ${body.command.slice(0, 120)}`,
+      });
+      return new Response(
+        JSON.stringify({
+          reply: refusal,
+          action: null,
+          blocked: true,
+          agent: "OPENCLAW_AGENT_V2.5",
+          calls: [],
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 },
+      );
+    }
+
     // SECURITY: token is read ONLY from backend secrets. No header fallback,
     // no client-supplied token, no LocalStorage path. Never logged or echoed.
     const bridgeToken = Deno.env.get("OPENCLAW_BRIDGE_TOKEN");
