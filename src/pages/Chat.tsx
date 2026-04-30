@@ -17,25 +17,43 @@ type BridgeAction =
   | "system"
   | "gateway-status"
   | "status"
-  | "telegram-status";
+  | "telegram-status"
+  | "stability"
+  | "alerts";
 
-// SECURE COMMAND MAP :: only these inputs are allowed. Anything else is
-// rejected locally without ever reaching the bridge or VPS.
-const COMMAND_HELP = [
-  "UNRECOGNIZED COMMAND :: input rejected by command guard.",
+// Local copy of forbidden patterns. The edge function enforces this again
+// server-side; this is just a fast first line of defence.
+const FORBIDDEN_PATTERNS: RegExp[] = [
+  /\bdelete\b/i, /\bremove\b/i, /\brm\s+-/i, /\bdrop\b/i, /\bpurge\b/i,
+  /\bstop\s+(server|service|bot|gateway|telegram|docker|bridge)\b/i,
+  /\brestart\b/i, /\breboot\b/i, /\bshutdown\b/i, /\bkill\b/i,
+  /\bchange\s+(token|secret|password|config)\b/i,
+  /\bedit\s+(config|env|secret|token)\b/i,
+  /\bdocker\b/i, /\bkubectl\b/i, /\bsystemctl\b/i, /\bsudo\b/i,
+  /\bshell\b/i, /\bbash\b/i, /\bsh\s+-c\b/i,
+  /\bcloudflare\b/i, /\bdns\b/i, /\bfirewall\b/i,
+  /\b(show|expose|reveal|print|leak|dump)\s+(the\s+)?(token|secret|password|api[_-]?key|env|credential)/i,
+  /\bgive me (the )?(token|secret|password|api[_-]?key)\b/i,
+];
+
+const FORBIDDEN_REPLY =
+  "REQUEST BLOCKED ::\n  This action is not allowed from Command Chat. " +
+  "Only safe read-only diagnostics are enabled.";
+
+const HELP_REPLY = [
+  "I couldn't map that to a safe diagnostic intent.",
   "",
-  "ALLOWED COMMANDS:",
-  "  health      | /health        → bridge health check",
-  "  system      | /system        → system snapshot",
-  "  gateway     | /gateway       → gateway link status",
-  "  status      | /status        → general agent status",
-  "  logs        | /logs          → recent system logs",
-  "  diagnostic  | /diagnostic    → full diagnostic sweep",
-  "  telegram    | /telegram      → telegram bridge status",
+  "Try natural phrases like:",
+  "  • 'check health'   · 'bridge online?'   · 'está vivo?'",
+  "  • 'system status'  · 'cpu ram disk'     · 'recursos'",
+  "  • 'gateway status' · 'check gateway'",
+  "  • 'show logs'      · 'errores recientes'",
+  "  • 'full diagnostic'· 'haz un diagnóstico'",
+  "  • 'check telegram' · 'por qué telegram no responde?'",
+  "  • 'stability'      · 'todo está bien?'",
+  "  • 'alerts'         · 'qué problemas hay?'",
   "",
-  "NATURAL PHRASES ACCEPTED:",
-  "  \"check health\", \"system status\", \"gateway status\",",
-  "  \"show logs\", \"full diagnostic\", \"check telegram\".",
+  "Add 'details' or 'raw' to any of the above to see the technical payload.",
 ].join("\n");
 
 type ResolvedCommand =
@@ -44,37 +62,48 @@ type ResolvedCommand =
 
 const resolveCommand = (raw: string): ResolvedCommand => {
   const c = raw.trim().toLowerCase().replace(/^\/+/, "");
-  if (!c) return { kind: "local", reply: COMMAND_HELP };
+  if (!c) return { kind: "local", reply: HELP_REPLY };
+
+  if (FORBIDDEN_PATTERNS.some((re) => re.test(c)))
+    return { kind: "local", reply: FORBIDDEN_REPLY };
+
+  // Telegram
+  if (/telegram|por\s*qu[eé]\s+telegram|revisa\s+telegram/.test(c))
+    return { kind: "action", action: "telegram-status", label: "Telegram Status" };
+
+  // Alerts
+  if (/\balerts?\b|alert\s*center|qu[eé]\s+problemas|warnings?\s+activos/.test(c))
+    return { kind: "action", action: "alerts", label: "Alert Center" };
+
+  // Stability
+  if (/stability|estado\s+general|todo\s+est[aá]\s+bien|system\s+stability/.test(c))
+    return { kind: "action", action: "stability", label: "System Stability" };
 
   // Diagnostic
-  if (/^(diagnostic|full[\s_-]*diagnostic|sweep|full[\s_-]*scan)$/.test(c))
+  if (/diagnostic|sweep|full[\s_-]*scan|diagn[oó]stico|haz\s+un\s+diagn/.test(c))
     return { kind: "action", action: "diagnostic", label: "Full Diagnostic" };
 
   // Logs
-  if (/^(logs?|show[\s_-]+logs?|tail[\s_-]+logs?)$/.test(c))
+  if (/\blogs?\b|tail|errores?\s+recientes|warnings?\s+recientes|mu[eé]strame\s+logs/.test(c))
     return { kind: "action", action: "logs", label: "System Logs" };
 
   // Gateway
-  if (/^(gateway|gateway[\s_-]*status|check[\s_-]+gateway)$/.test(c))
+  if (/gateway/.test(c))
     return { kind: "action", action: "gateway-status", label: "Gateway Status" };
 
   // Health
-  if (/^(health|check[\s_-]+health|ping|alive)$/.test(c))
+  if (/\bhealth\b|ping|alive|est[aá]\s+vivo|bridge\s+online|check\s+bridge|revisa\s+health/.test(c))
     return { kind: "action", action: "health", label: "Health Check" };
 
   // System
-  if (/^(system|system[\s_-]*status|check[\s_-]+system)$/.test(c))
+  if (/\bsystem\b|cpu|ram|mem(ory)?|disk|recursos|estado\s+del\s+sistema/.test(c))
     return { kind: "action", action: "system", label: "System Status" };
 
-  // Status (general)
-  if (/^(status|general[\s_-]*status|agent[\s_-]*status)$/.test(c))
+  // General status
+  if (/\bstatus\b|state|report|estado/.test(c))
     return { kind: "action", action: "status", label: "General Status" };
 
-  // Telegram status (composed from health + status + logs server-side)
-  if (/^(telegram|telegram[\s_-]*status|check[\s_-]+telegram)$/.test(c))
-    return { kind: "action", action: "telegram-status", label: "Telegram Status" };
-
-  return { kind: "local", reply: COMMAND_HELP };
+  return { kind: "local", reply: HELP_REPLY };
 };
 
 const Chat = () => {
@@ -300,7 +329,7 @@ const Chat = () => {
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="TYPE: health · system · gateway · status · logs · diagnostic · telegram"
+              placeholder="ASK NATURALLY :: 'check health', 'cpu ram disk', 'todo está bien?', 'alerts'…"
               disabled={sending}
               className="flex-1 bg-transparent font-mono text-sm outline-none placeholder:font-mono placeholder:text-[11px] placeholder:uppercase placeholder:tracking-widest placeholder:text-muted-foreground"
             />
