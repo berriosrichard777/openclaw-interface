@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import BridgeTestCard from "@/components/BridgeTestCard";
 import StabilityMonitorCard from "@/components/StabilityMonitorCard";
+import AlertCenterCard from "@/components/AlertCenterCard";
 
 const Stat = ({
   label,
