@@ -329,7 +329,7 @@ const Chat = () => {
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="TYPE: health · system · gateway · status · logs · diagnostic · telegram"
+              placeholder="ASK NATURALLY :: 'check health', 'cpu ram disk', 'todo está bien?', 'alerts'…"
               disabled={sending}
               className="flex-1 bg-transparent font-mono text-sm outline-none placeholder:font-mono placeholder:text-[11px] placeholder:uppercase placeholder:tracking-widest placeholder:text-muted-foreground"
             />
