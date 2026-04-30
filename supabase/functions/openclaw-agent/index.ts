@@ -194,11 +194,41 @@ const fmt = (v: unknown): string => {
   }
 };
 
+// ---- Conversational response formatter ---------------------------------
+// Standard format used across all natural-language replies:
+//   Status:   OK / Warning / Critical / Blocked
+//   Summary:  short natural-language explanation
+//   Next step: concrete recommendation (optional)
+//   Details:  raw payload, only when wantsRaw is true
+type ConvoStatus = "OK" | "Warning" | "Critical" | "Blocked";
+
+const conversational = (opts: {
+  status: ConvoStatus;
+  summary: string;
+  nextStep?: string;
+  raw?: BridgeCallResult[];
+  wantsRaw?: boolean;
+}): string => {
+  const lines: string[] = [
+    `Status: ${opts.status}`,
+    `Summary: ${opts.summary}`,
+  ];
+  if (opts.nextStep && opts.nextStep.trim()) {
+    lines.push(`Next step: ${opts.nextStep}`);
+  }
+  if (opts.wantsRaw && opts.raw && opts.raw.length) {
+    lines.push("", "Details:", ...opts.raw.map((c) => formatResult(c.endpoint, c)));
+  } else {
+    lines.push("", "(type 'details' or 'raw' to see the technical payload)");
+  }
+  return lines.join("\n");
+};
+
 const buildTelegramSummary = (
   health: BridgeCallResult,
   status: BridgeCallResult,
   logs: BridgeCallResult,
-): string => {
+): { status: ConvoStatus; summary: string; nextStep: string } => {
   // Try to locate a "telegram" sub-object first; fall back to root scans.
   const sources: unknown[] = [];
   for (const c of [health, status]) {
@@ -251,87 +281,41 @@ const buildTelegramSummary = (
   }
 
   // ---- Verdict ----------------------------------------------------------
-  // OPERATIONAL    → configured + sendMessage ok in logs (even if running=false)
-  // PARTIAL OK     → configured + sendMessage ok but a runtime field disagrees
-  // WARNING / ERROR / OK as before for other cases.
-  let verdict: "OK" | "OPERATIONAL" | "PARTIAL OK" | "WARNING" | "ERROR" = "OK";
-  if (!health.ok || !status.ok) verdict = "WARNING";
-  if (configured === false) verdict = "WARNING";
-  if (running === false) verdict = "WARNING";
-  if (lastError && typeof lastError === "string" && lastError.trim() !== "") verdict = "ERROR";
+  let convoStatus: ConvoStatus = "OK";
+  let summary = "Telegram está operativo.";
+  let nextStep = "";
 
-  // sendMessage success overrides "running=false" warning.
-  if (configured === true && sendMessageOk) {
-    verdict = running === false ? "PARTIAL OK" : "OPERATIONAL";
+  const realError = lastError && typeof lastError === "string" && lastError.trim() !== "";
+
+  if (configured === false) {
+    convoStatus = "Critical";
+    summary = "Telegram no está configurado en OpenClaw.";
+    nextStep = "Revisa la configuración del bot en el backend (read-only desde aquí).";
+  } else if (realError) {
+    convoStatus = "Critical";
+    summary = `Telegram reporta un error reciente (${fmt(lastError)}).`;
+    nextStep = "Revisa System Logs → Errors y el estado del gateway/channel.";
+  } else if (configured === true && sendMessageOk && running === false) {
+    convoStatus = "Warning";
+    summary = "Telegram está parcialmente operativo. Puede enviar mensajes, pero OpenClaw reporta running=false.";
+    nextStep = "Monitorea Telegram logs o revisa el plugin runtime si deja de responder.";
+  } else if (configured === true && sendMessageOk) {
+    convoStatus = "OK";
+    summary = `Telegram está operativo${username ? ` (bot ${fmt(username)})` : ""}. Envíos recientes confirmados en logs.`;
+  } else if (running === false) {
+    convoStatus = "Warning";
+    summary = "Telegram está configurado pero OpenClaw lo reporta como no running, y no hay envíos confirmados en logs.";
+    nextStep = "Monitorea Telegram logs o revisa el plugin runtime.";
+  } else if (!health.ok || !status.ok) {
+    convoStatus = "Warning";
+    summary = "No se pudo confirmar el estado de Telegram porque health/status no respondieron limpio.";
+    nextStep = "Re-ejecuta 'health' y 'gateway' para descartar problemas de bridge.";
+  } else {
+    convoStatus = "OK";
+    summary = `Telegram parece operativo${username ? ` (bot ${fmt(username)})` : ""}.`;
   }
 
-  const headline = (verdict === "OPERATIONAL" || verdict === "PARTIAL OK")
-    ? `TELEGRAM STATUS :: OPERATIONAL / ${verdict === "PARTIAL OK" ? "PARTIAL OK" : "OK"}`
-    : `TELEGRAM STATUS :: ${verdict}`;
-
-  const lines = [
-    headline,
-    "",
-    `  configured                 : ${fmt(configured)}`,
-    `  bot username               : ${fmt(username)}`,
-    `  send message test detected : ${sendMessageOk ? "true" : "false"}`,
-    `  running field              : ${fmt(running)}`,
-    `  last probe                 : ${fmt(lastProbe)}`,
-    `  last error                 : ${fmt(lastError)}`,
-    `  last telegram log ts       : ${fmt(lastTelegramLogTs)}`,
-    `  webhook url                : ${webhookUrl ? "present" : "unknown"}`,
-    `  can join groups            : ${fmt(canJoin)}`,
-    `  can read all messages      : ${fmt(canReadAll)}`,
-    "",
-    `  sources :: health HTTP ${health.status} · status HTTP ${status.status} · logs HTTP ${logs.status}`,
-  ];
-
-  // Contextual explanations.
-  if (configured === true && sendMessageOk && running === false) {
-    lines.push(
-      "",
-      "RUNTIME WARNING ::",
-      "  OpenClaw reports running=false, but Telegram sendMessage succeeded",
-      "  in recent logs. Telegram is operational for outbound messaging;",
-      "  the running flag may reflect a stale or partial runtime probe.",
-    );
-  } else if (configured === true && running === false && !sendMessageOk) {
-    lines.push(
-      "",
-      "EXPLANATION ::",
-      "  Telegram está configurado, pero OpenClaw lo reporta como no running",
-      "  y no se detectaron envíos exitosos en los logs recientes.",
-    );
-  } else if (lastError && typeof lastError === "string" && lastError.trim() !== "") {
-    lines.push(
-      "",
-      "EXPLANATION ::",
-      "  Telegram reporta un error reciente. Revisa los logs y el estado",
-      "  del gateway/channel para más contexto.",
-    );
-  } else if (configured === false) {
-    lines.push(
-      "",
-      "EXPLANATION ::",
-      "  Telegram no está configurado en OpenClaw. Esta acción es read-only,",
-      "  no inicializa ni modifica la integración.",
-    );
-  }
-
-  // Recommended checks: shown unless verdict is plain OK / OPERATIONAL.
-  if (verdict !== "OK" && verdict !== "OPERATIONAL") {
-    lines.push(
-      "",
-      "RECOMMENDED CHECKS ::",
-      "  • Review Telegram runtime/plugin status",
-      "  • Monitor future Telegram logs",
-      "  • Send another test message if needed",
-      "",
-      "  (read-only :: no restart, webhook change, or configuration change performed)",
-    );
-  }
-
-  return lines.join("\n");
+  return { status: convoStatus, summary, nextStep };
 };
 
 // ---- Natural-language summaries -----------------------------------------
@@ -340,65 +324,66 @@ const buildTelegramSummary = (
 const naturalize = (
   action: BridgeAction,
   r: BridgeCallResult,
-  wantsRaw: boolean,
-): string => {
-  const labelMap: Record<string, string> = {
-    "health": "Bridge Health",
-    "system": "System Resources",
-    "gateway-status": "Gateway Link",
-    "status": "Agent Status",
-    "logs": "Recent Logs",
-  };
-  const label = labelMap[action] ?? action.toUpperCase();
+): { status: ConvoStatus; summary: string; nextStep: string } => {
   const ok = r.ok;
-  const status = ok ? "OK" : r.status === 0 ? "UNREACHABLE" : "DEGRADED";
-
-  const lines: string[] = [
-    `${label.toUpperCase()} :: ${status}`,
-    "",
-  ];
 
   if (action === "health") {
-    lines.push(ok
-      ? "  Bridge responded successfully — OpenClaw is alive and reachable."
-      : "  Bridge did not respond cleanly. The agent may be offline or the link is degraded.");
-    if (!ok) lines.push("  Next step: check Gateway Link and try again in a few seconds.");
-  } else if (action === "system") {
+    return ok
+      ? { status: "OK", summary: "El bridge respondió correctamente. OpenClaw está vivo y accesible.", nextStep: "" }
+      : { status: "Critical", summary: "El bridge no respondió limpio. El agente puede estar offline.", nextStep: "Revisa Gateway Link y reintenta en unos segundos." };
+  }
+  if (action === "system") {
     const cpu = findNum(r.body, /^cpu([_-]?(pct|percent|usage|load))?$/i);
     const ram = findRamPercent(r.body);
     const disk = findNum(r.body, /^(disk|storage)([_-]?(pct|percent|usage))?$/i);
-    lines.push(`  CPU: ${fmtPct(cpu)} · RAM: ${fmtPct(ram)} · Disk: ${fmtPct(disk)}`);
     const hot = [cpu, ram, disk].some((v) => typeof v === "number" && v >= 90);
     const warm = [cpu, ram, disk].some((v) => typeof v === "number" && v >= 75);
-    lines.push(hot
-      ? "  System resources are critical — investigate immediately."
-      : warm
-      ? "  System resources are elevated — keep an eye on usage."
-      : "  System resources look normal.");
-    if (hot || warm) lines.push("  Next step: open System Stability Monitor for the full picture.");
-  } else if (action === "gateway-status") {
-    lines.push(ok
-      ? "  Gateway link reports OK."
-      : "  Gateway link is degraded or unreachable.");
-    if (!ok) lines.push("  Next step: re-run diagnostic to confirm whether bridge or gateway is at fault.");
-  } else if (action === "status") {
-    lines.push(ok ? "  General agent status responded successfully." : "  Agent did not return a clean status.");
-  } else if (action === "logs") {
+    const ramTxt = ram === null ? "RAM unknown" : `RAM ${fmtPct(ram)}`;
+    const base = `CPU ${fmtPct(cpu)} · ${ramTxt} · Disk ${fmtPct(disk)}.`;
+    if (!ok) return { status: "Critical", summary: `No se pudo leer el snapshot del sistema. ${base}`, nextStep: "Revisa el bridge y reintenta." };
+    if (hot) return { status: "Critical", summary: `Recursos críticos. ${base}`, nextStep: "Investiga procesos pesados de inmediato." };
+    if (warm) return { status: "Warning", summary: `Recursos elevados. ${base}`, nextStep: "Vigila la carga; abre System Stability Monitor para más contexto." };
+    if (ram === null) return { status: "Warning", summary: `RAM unknown — CPU y Disk normales. ${base}`, nextStep: "" };
+    return { status: "OK", summary: `Recursos normales. ${base}`, nextStep: "" };
+  }
+  if (action === "gateway-status") {
+    return ok
+      ? { status: "OK", summary: "El gateway link responde correctamente.", nextStep: "" }
+      : { status: "Critical", summary: "El gateway link está degradado o inalcanzable.", nextStep: "Re-ejecuta diagnostic para confirmar si el problema es bridge o gateway." };
+  }
+  if (action === "status") {
+    return ok
+      ? { status: "OK", summary: "El estado general del agente respondió correctamente.", nextStep: "" }
+      : { status: "Warning", summary: "El agente no devolvió un status limpio.", nextStep: "Revisa logs y health." };
+  }
+  if (action === "logs") {
     const text = typeof r.body === "string" ? r.body : JSON.stringify(r.body ?? "");
-    const errCount = (text.match(/\b(ERROR|FATAL|exception|failed)\b/gi) ?? []).length;
-    const warnCount = (text.match(/\bWARN(ING)?\b/gi) ?? []).length;
-    lines.push(`  Errors: ${errCount} · Warnings: ${warnCount}`);
-    lines.push(errCount === 0 && warnCount === 0
-      ? "  No notable issues found in recent logs."
-      : "  Recent log activity contains warnings or errors — review System Logs for context.");
+    // Strip benign noise so we don't false-positive on "error: null" etc.
+    const benign = [
+      /[^\n]*\berror\s*:\s*null[^\n]*/gi,
+      /[^\n]*"error"\s*:\s*null[^\n]*/gi,
+      /[^\n]*last\s*error\s*:\s*(unknown|null|none)[^\n]*/gi,
+      /[^\n]*no\s+(critical\s+)?errors?\s+found[^\n]*/gi,
+      /[^\n]*\bENOENT\b[^\n]*/gi,
+      /[^\n]*no such file or directory[^\n]*/gi,
+      /[^\n]*heartbeat[-_]?_meta[^\n]*/gi,
+      /[^\n]*\[tools\]\s*read\s+failed[^\n]*/gi,
+    ];
+    let scrubbed = text;
+    for (const re of benign) scrubbed = scrubbed.replace(re, "");
+    const realErrSignals = [
+      /logLevelName"?\s*:\s*"?ERROR/i, /\bFATAL\b/i, /\bexception\b/i,
+      /connection refused/i, /\btimeout\b/i, /\b5\d{2}\b/, /\bfailed\b/i,
+    ];
+    const realWarnSignals = [/logLevelName"?\s*:\s*"?WARN/i, /\bWARNING\b/i, /\bdegraded\b/i];
+    const hasErr = realErrSignals.some((re) => re.test(scrubbed));
+    const hasWarn = realWarnSignals.some((re) => re.test(scrubbed));
+    if (hasErr) return { status: "Critical", summary: "Se encontraron errores recientes en los logs.", nextStep: "Revisa System Logs → Errors." };
+    if (hasWarn) return { status: "Warning", summary: "Hay warnings recientes en los logs, pero no errores críticos.", nextStep: "Revisa System Logs → Warnings." };
+    return { status: "OK", summary: "No hay errores ni warnings notables en los logs recientes.", nextStep: "" };
   }
-
-  if (wantsRaw) {
-    lines.push("", "RAW ::", typeof r.body === "string" ? r.body : JSON.stringify(r.body, null, 2));
-  } else {
-    lines.push("", "  (type 'details' or 'raw' to see the technical payload)");
-  }
-  return lines.join("\n");
+  // Fallback (shouldn't be reached for the explicit actions above).
+  return { status: ok ? "OK" : "Warning", summary: ok ? "Acción completada." : "La acción no respondió limpio.", nextStep: "" };
 };
 
 const fmtPct = (v: number | null): string =>
@@ -448,8 +433,8 @@ const buildStabilitySummary = (
   system: BridgeCallResult,
   gateway: BridgeCallResult,
   telegram: BridgeCallResult,
-  logs: BridgeCallResult,
-): string => {
+  _logs: BridgeCallResult,
+): { status: ConvoStatus; summary: string; nextStep: string } => {
   const cpu = findNum(system.body, /^cpu([_-]?(pct|percent|usage|load))?$/i);
   const ram = findRamPercent(system.body);
   const disk = findNum(system.body, /^(disk|storage)([_-]?(pct|percent|usage))?$/i);
@@ -457,29 +442,43 @@ const buildStabilitySummary = (
   const bridgeOk = health.ok;
   const gatewayOk = gateway.ok;
   const sysOk = system.ok;
-  const tgOk = telegram.ok;
 
-  const hot = [cpu, ram, disk].some((v) => typeof v === "number" && v >= 90);
-  const warm = [cpu, ram, disk].some((v) => typeof v === "number" && v >= 75);
+  // Reuse telegram analyzer for a coherent verdict on Telegram.
+  const tg = buildTelegramSummary(health, telegram, _logs);
+  const tgPartial = tg.status === "Warning";
+  const tgCritical = tg.status === "Critical";
 
-  let verdict: "HEALTHY" | "WARNING" | "CRITICAL" = "HEALTHY";
-  if (!bridgeOk || !gatewayOk || !sysOk || hot) verdict = "CRITICAL";
-  else if (!tgOk || warm || ram === null) verdict = "WARNING";
+  const hot = [cpu, disk].some((v) => typeof v === "number" && v >= 90)
+           || (typeof ram === "number" && ram >= 90);
+  const warm = [cpu, disk].some((v) => typeof v === "number" && v >= 75)
+            || (typeof ram === "number" && ram >= 75);
 
-  return [
-    `SYSTEM STABILITY :: ${verdict}`,
-    "",
-    `  Bridge   : ${bridgeOk ? "OK" : "DOWN"}`,
-    `  Gateway  : ${gatewayOk ? "OK" : "DEGRADED"}`,
-    `  System   : CPU ${fmtPct(cpu)} · RAM ${fmtPct(ram)} · Disk ${fmtPct(disk)}`,
-    `  Telegram : ${tgOk ? "reachable" : "unreachable"}`,
-    "",
-    verdict === "HEALTHY"
-      ? "  All core systems look stable."
-      : verdict === "WARNING"
-      ? "  Some non-critical signals need attention. Open the System Stability Monitor for details."
-      : "  Critical signal detected. Open the System Stability Monitor and Alert Center now.",
-  ].join("\n");
+  const cpuTxt  = `CPU ${fmtPct(cpu)}`;
+  const diskTxt = `Disk ${fmtPct(disk)}`;
+  const ramTxt  = ram === null ? "RAM unknown" : `RAM ${fmtPct(ram)}`;
+
+  let status: ConvoStatus = "OK";
+  if (!bridgeOk || !gatewayOk || !sysOk || hot || tgCritical) status = "Critical";
+  else if (tgPartial || warm) status = "Warning";
+
+  const parts: string[] = [];
+  parts.push(`Bridge ${bridgeOk ? "OK" : "DOWN"}`);
+  parts.push(`Gateway ${gatewayOk ? "OK" : "DEGRADED"}`);
+  parts.push(`Telegram ${tgCritical ? "Critical" : tgPartial ? "Partial OK" : "OK"}`);
+  if (ram === null && !hot && !warm) {
+    parts.push(`${cpuTxt} y ${diskTxt} normales, RAM unknown`);
+  } else {
+    parts.push(`${cpuTxt} · ${ramTxt} · ${diskTxt}`);
+  }
+
+  const summary = `${parts.join(". ")}.`;
+  const nextStep = status === "Critical"
+    ? "Abre el System Stability Monitor y el Alert Center ahora."
+    : status === "Warning"
+    ? "No hay acción urgente; revisa warnings si quieres confirmar."
+    : "";
+
+  return { status, summary, nextStep };
 };
 
 // Alerts summary (lightweight overview based on the same probes).
@@ -489,11 +488,15 @@ const buildAlertsSummary = (
   gateway: BridgeCallResult,
   telegram: BridgeCallResult,
   logs: BridgeCallResult,
-): string => {
+): { status: ConvoStatus; summary: string; nextStep: string } => {
   const alerts: { sev: "CRIT" | "WARN" | "INFO"; msg: string }[] = [];
   if (!health.ok) alerts.push({ sev: "CRIT", msg: "Bridge health probe failed." });
   if (!gateway.ok) alerts.push({ sev: "CRIT", msg: "Gateway link probe failed." });
   if (!system.ok) alerts.push({ sev: "CRIT", msg: "System snapshot probe failed." });
+
+  const tg = buildTelegramSummary(health, telegram, logs);
+  if (tg.status === "Critical") alerts.push({ sev: "CRIT", msg: tg.summary });
+  else if (tg.status === "Warning") alerts.push({ sev: "WARN", msg: tg.summary });
 
   const ram = findRamPercent(system.body);
   if (ram === null) alerts.push({ sev: "INFO", msg: "RAM usage unknown — CPU and Disk evaluated independently." });
@@ -501,22 +504,26 @@ const buildAlertsSummary = (
   else if (ram >= 75) alerts.push({ sev: "WARN", msg: `RAM elevated (${Math.round(ram)}%).` });
 
   const text = typeof logs.body === "string" ? logs.body : JSON.stringify(logs.body ?? "");
-  if (/\bWARN(ING)?\b/i.test(text)) alerts.push({ sev: "WARN", msg: "Recent warnings found in logs." });
+  if (/logLevelName"?\s*:\s*"?WARN/i.test(text) || /\bWARNING\b/i.test(text)) {
+    alerts.push({ sev: "WARN", msg: "Recent warnings found in logs." });
+  }
 
   const counts = { CRIT: 0, WARN: 0, INFO: 0 };
   for (const a of alerts) counts[a.sev]++;
 
-  const head = `ALERT CENTER :: ${counts.CRIT} Crit · ${counts.WARN} Warn · ${counts.INFO} Info`;
+  let status: ConvoStatus = "OK";
+  if (counts.CRIT > 0) status = "Critical";
+  else if (counts.WARN > 0) status = "Warning";
+
   if (alerts.length === 0) {
-    return `${head}\n\n  No active alerts. System looks stable.`;
+    return { status: "OK", summary: "No hay alertas activas. El sistema parece estable.", nextStep: "" };
   }
-  return [
-    head,
-    "",
-    ...alerts.map((a) => `  [${a.sev}] ${a.msg}`),
-    "",
-    "  Open the Alert Center on the Dashboard for the full breakdown.",
-  ].join("\n");
+
+  const summary =
+    `${counts.CRIT} Crit · ${counts.WARN} Warn · ${counts.INFO} Info. ` +
+    alerts.slice(0, 3).map((a) => `[${a.sev}] ${a.msg}`).join(" ");
+  const nextStep = "Abre el Alert Center en el Dashboard para el detalle completo.";
+  return { status, summary, nextStep };
 };
 
 Deno.serve(async (req) => {
@@ -563,12 +570,11 @@ Deno.serve(async (req) => {
     // SECURITY GUARD :: forbidden intents are rejected locally and never
     // forwarded to the VPS bridge. Only safe read-only diagnostics are allowed.
     if (!body.action && isForbidden(body.command)) {
-      const refusal =
-        "REQUEST BLOCKED ::\n" +
-        "  This action is not allowed from Command Chat. Only safe read-only " +
-        "diagnostics are enabled.\n\n" +
-        "  Allowed intents :: health · system · gateway · logs · diagnostic · " +
-        "telegram · stability · alerts.";
+      const refusal = conversational({
+        status: "Blocked",
+        summary: "Esta acción no está permitida desde Command Chat. Solo diagnósticos seguros read-only están habilitados.",
+        nextStep: "Usa health, system, gateway, logs, diagnostic, telegram, stability o alerts.",
+      });
       await supabase.from("activity_logs").insert({
         user_id: userId,
         source: "TERMINAL",
@@ -619,16 +625,11 @@ Deno.serve(async (req) => {
     let calls: BridgeCallResult[] = [];
 
     if (!action) {
-      reply = [
-        "UNRECOGNIZED COMMAND ::",
-        "  I couldn't map that to a safe diagnostic intent.",
-        "",
-        "  Try: 'check health', 'system status', 'gateway', 'logs',",
-        "  'full diagnostic', 'telegram status', 'stability', 'alerts'.",
-        "",
-        "  (Free-form commands to the VPS, shell, Docker, Cloudflare or",
-        "  filesystem are intentionally disabled. Read-only diagnostics only.)",
-      ].join("\n");
+      reply = conversational({
+        status: "Blocked",
+        summary: "No pude mapear ese mensaje a un diagnóstico seguro.",
+        nextStep: "Prueba: 'check health', 'system', 'gateway', 'logs', 'diagnostic', 'telegram', 'stability' o 'alerts'.",
+      });
     } else if (action === "diagnostic") {
       const order: Array<Exclude<BridgeAction, "diagnostic" | "telegram-status" | "stability" | "alerts">> = [
         "health", "system", "gateway-status", "status",
@@ -637,17 +638,22 @@ Deno.serve(async (req) => {
         order.map((a) => callBridge(VPS_BASE, BRIDGE_ROUTES[a], bridgeToken)),
       );
       const allOk = calls.every((c) => c.ok);
-      const head = `FULL DIAGNOSTIC :: ${allOk ? "ALL SYSTEMS GREEN" : "ISSUES DETECTED"}`;
-      const summary = allOk
-        ? "  Bridge, system, gateway and status all responded cleanly."
-        : "  One or more probes failed — review the per-endpoint detail below.";
-      const nextStep = allOk
-        ? ""
-        : "\n  Next step: run 'stability' for the consolidated verdict, or 'alerts' for actionable items.";
-      const tail = wantsRaw
-        ? "\n\nRAW ::\n" + calls.map((c, i) => formatResult(order[i].toUpperCase(), c)).join("\n\n")
-        : "\n\n  (type 'details' or 'raw' to see the technical payload)";
-      reply = `${head}\n\n${summary}${nextStep}${tail}`;
+      const failed = calls
+        .map((c, i) => ({ name: order[i], ok: c.ok }))
+        .filter((x) => !x.ok)
+        .map((x) => x.name)
+        .join(", ");
+      reply = conversational({
+        status: allOk ? "OK" : "Critical",
+        summary: allOk
+          ? "Bridge, system, gateway y status respondieron limpio."
+          : `Una o más probes fallaron (${failed || "varias"}).`,
+        nextStep: allOk
+          ? ""
+          : "Ejecuta 'stability' para el veredicto consolidado o 'alerts' para acciones concretas.",
+        raw: calls,
+        wantsRaw,
+      });
     } else if (action === "telegram-status") {
       const [h, s, l] = await Promise.all([
         callBridge(VPS_BASE, "/api/openclaw/health", bridgeToken),
@@ -655,11 +661,9 @@ Deno.serve(async (req) => {
         callBridge(VPS_BASE, "/api/openclaw/logs?lines=100", bridgeToken),
       ]);
       calls = [h, s, l];
-      reply = buildTelegramSummary(h, s, l);
-      if (wantsRaw) {
-        reply += "\n\nRAW ::\n" + calls.map((c) => formatResult(c.endpoint, c)).join("\n\n");
-      }
-    } else if (action === "stability" || action === "alerts") {
+      const tg = buildTelegramSummary(h, s, l);
+      reply = conversational({ ...tg, raw: calls, wantsRaw });
+    } else if (action === "stability") {
       const [h, sys, gw, tg, lg] = await Promise.all([
         callBridge(VPS_BASE, "/api/openclaw/health", bridgeToken),
         callBridge(VPS_BASE, "/api/openclaw/system", bridgeToken),
@@ -668,21 +672,31 @@ Deno.serve(async (req) => {
         callBridge(VPS_BASE, "/api/openclaw/logs?lines=100", bridgeToken),
       ]);
       calls = [h, sys, gw, tg, lg];
-      reply = action === "stability"
-        ? buildStabilitySummary(h, sys, gw, tg, lg)
-        : buildAlertsSummary(h, sys, gw, tg, lg);
-      if (wantsRaw) {
-        reply += "\n\nRAW ::\n" + calls.map((c) => formatResult(c.endpoint, c)).join("\n\n");
-      }
+      const s = buildStabilitySummary(h, sys, gw, tg, lg);
+      reply = conversational({ ...s, raw: calls, wantsRaw });
+    } else if (action === "alerts") {
+      const [h, sys, gw, tg, lg] = await Promise.all([
+        callBridge(VPS_BASE, "/api/openclaw/health", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/system", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/gateway-status", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/status", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/logs?lines=100", bridgeToken),
+      ]);
+      calls = [h, sys, gw, tg, lg];
+      const a = buildAlertsSummary(h, sys, gw, tg, lg);
+      reply = conversational({ ...a, raw: calls, wantsRaw });
     } else {
       const path = BRIDGE_ROUTES[action];
       const r = await callBridge(VPS_BASE, path, bridgeToken);
       calls = [r];
-      // When the UI passes an explicit action (button click), keep the raw
-      // formatted output to preserve existing diagnostic panels.
-      reply = body.action
-        ? formatResult(action.toUpperCase(), r)
-        : naturalize(action, r, wantsRaw);
+      // Quick-action buttons (body.action present) keep the legacy raw format
+      // so the existing diagnostic panels stay intact.
+      if (body.action) {
+        reply = formatResult(action.toUpperCase(), r);
+      } else {
+        const n = naturalize(action, r);
+        reply = conversational({ ...n, raw: calls, wantsRaw });
+      }
     }
 
     // Log a TERMINAL event for traceability (never includes the token).
