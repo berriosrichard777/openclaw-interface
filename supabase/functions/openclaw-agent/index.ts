@@ -24,7 +24,33 @@ type BridgeAction =
   | "status"
   | "logs"
   | "diagnostic"
-  | "telegram-status";
+  | "telegram-status"
+  | "stability"
+  | "alerts";
+
+// ---- Forbidden / unsafe intents -----------------------------------------
+// Any command that matches these patterns is rejected locally and never
+// forwarded to the bridge. Read-only diagnostics only.
+const FORBIDDEN_PATTERNS: RegExp[] = [
+  /\bdelete\b/i, /\bremove\b/i, /\brm\s+-/i, /\bdrop\b/i, /\bpurge\b/i,
+  /\bstop\s+(server|service|bot|gateway|telegram|docker|bridge)\b/i,
+  /\brestart\b/i, /\breboot\b/i, /\bshutdown\b/i, /\bkill\b/i,
+  /\bchange\s+(token|secret|password|config)\b/i,
+  /\bedit\s+(config|env|secret|token)\b/i,
+  /\bset\s+(token|secret|password|env)\b/i,
+  /\b(rotate|revoke)\s+(token|key|secret)\b/i,
+  /\bdocker\b/i, /\bkubectl\b/i, /\bsystemctl\b/i, /\bsudo\b/i,
+  /\bshell\b/i, /\bbash\b/i, /\bsh\s+-c\b/i, /\bexec\b/i, /\bspawn\b/i,
+  /\bcloudflare\b/i, /\bdns\b/i, /\bfirewall\b/i, /\biptables\b/i,
+  /\bcat\s+\/?(etc|root|home|var)\b/i, /\bchmod\b/i, /\bchown\b/i,
+  /\b(show|expose|reveal|print|leak|dump)\s+(the\s+)?(token|secret|password|api[_-]?key|env|credential)/i,
+  /\bwhat('?s| is)\s+(the\s+)?(token|secret|password|api[_-]?key)\b/i,
+  /\bgive me (the )?(token|secret|password|api[_-]?key)\b/i,
+  /\binstall\b/i, /\bupdate\s+(package|apt|npm)\b/i, /\bnpm\s+(install|i|run)\b/i,
+];
+
+const isForbidden = (cmd: string): boolean =>
+  FORBIDDEN_PATTERNS.some((re) => re.test(cmd));
 
 // Bridge endpoint map. All routes are GET.
 const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic" | "telegram-status">, string> = {
