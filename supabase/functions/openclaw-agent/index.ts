@@ -625,16 +625,11 @@ Deno.serve(async (req) => {
     let calls: BridgeCallResult[] = [];
 
     if (!action) {
-      reply = [
-        "UNRECOGNIZED COMMAND ::",
-        "  I couldn't map that to a safe diagnostic intent.",
-        "",
-        "  Try: 'check health', 'system status', 'gateway', 'logs',",
-        "  'full diagnostic', 'telegram status', 'stability', 'alerts'.",
-        "",
-        "  (Free-form commands to the VPS, shell, Docker, Cloudflare or",
-        "  filesystem are intentionally disabled. Read-only diagnostics only.)",
-      ].join("\n");
+      reply = conversational({
+        status: "Blocked",
+        summary: "No pude mapear ese mensaje a un diagnóstico seguro.",
+        nextStep: "Prueba: 'check health', 'system', 'gateway', 'logs', 'diagnostic', 'telegram', 'stability' o 'alerts'.",
+      });
     } else if (action === "diagnostic") {
       const order: Array<Exclude<BridgeAction, "diagnostic" | "telegram-status" | "stability" | "alerts">> = [
         "health", "system", "gateway-status", "status",
@@ -643,17 +638,22 @@ Deno.serve(async (req) => {
         order.map((a) => callBridge(VPS_BASE, BRIDGE_ROUTES[a], bridgeToken)),
       );
       const allOk = calls.every((c) => c.ok);
-      const head = `FULL DIAGNOSTIC :: ${allOk ? "ALL SYSTEMS GREEN" : "ISSUES DETECTED"}`;
-      const summary = allOk
-        ? "  Bridge, system, gateway and status all responded cleanly."
-        : "  One or more probes failed — review the per-endpoint detail below.";
-      const nextStep = allOk
-        ? ""
-        : "\n  Next step: run 'stability' for the consolidated verdict, or 'alerts' for actionable items.";
-      const tail = wantsRaw
-        ? "\n\nRAW ::\n" + calls.map((c, i) => formatResult(order[i].toUpperCase(), c)).join("\n\n")
-        : "\n\n  (type 'details' or 'raw' to see the technical payload)";
-      reply = `${head}\n\n${summary}${nextStep}${tail}`;
+      const failed = calls
+        .map((c, i) => ({ name: order[i], ok: c.ok }))
+        .filter((x) => !x.ok)
+        .map((x) => x.name)
+        .join(", ");
+      reply = conversational({
+        status: allOk ? "OK" : "Critical",
+        summary: allOk
+          ? "Bridge, system, gateway y status respondieron limpio."
+          : `Una o más probes fallaron (${failed || "varias"}).`,
+        nextStep: allOk
+          ? ""
+          : "Ejecuta 'stability' para el veredicto consolidado o 'alerts' para acciones concretas.",
+        raw: calls,
+        wantsRaw,
+      });
     } else if (action === "telegram-status") {
       const [h, s, l] = await Promise.all([
         callBridge(VPS_BASE, "/api/openclaw/health", bridgeToken),
@@ -661,11 +661,9 @@ Deno.serve(async (req) => {
         callBridge(VPS_BASE, "/api/openclaw/logs?lines=100", bridgeToken),
       ]);
       calls = [h, s, l];
-      reply = buildTelegramSummary(h, s, l);
-      if (wantsRaw) {
-        reply += "\n\nRAW ::\n" + calls.map((c) => formatResult(c.endpoint, c)).join("\n\n");
-      }
-    } else if (action === "stability" || action === "alerts") {
+      const tg = buildTelegramSummary(h, s, l);
+      reply = conversational({ ...tg, raw: calls, wantsRaw });
+    } else if (action === "stability") {
       const [h, sys, gw, tg, lg] = await Promise.all([
         callBridge(VPS_BASE, "/api/openclaw/health", bridgeToken),
         callBridge(VPS_BASE, "/api/openclaw/system", bridgeToken),
@@ -674,21 +672,31 @@ Deno.serve(async (req) => {
         callBridge(VPS_BASE, "/api/openclaw/logs?lines=100", bridgeToken),
       ]);
       calls = [h, sys, gw, tg, lg];
-      reply = action === "stability"
-        ? buildStabilitySummary(h, sys, gw, tg, lg)
-        : buildAlertsSummary(h, sys, gw, tg, lg);
-      if (wantsRaw) {
-        reply += "\n\nRAW ::\n" + calls.map((c) => formatResult(c.endpoint, c)).join("\n\n");
-      }
+      const s = buildStabilitySummary(h, sys, gw, tg, lg);
+      reply = conversational({ ...s, raw: calls, wantsRaw });
+    } else if (action === "alerts") {
+      const [h, sys, gw, tg, lg] = await Promise.all([
+        callBridge(VPS_BASE, "/api/openclaw/health", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/system", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/gateway-status", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/status", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/logs?lines=100", bridgeToken),
+      ]);
+      calls = [h, sys, gw, tg, lg];
+      const a = buildAlertsSummary(h, sys, gw, tg, lg);
+      reply = conversational({ ...a, raw: calls, wantsRaw });
     } else {
       const path = BRIDGE_ROUTES[action];
       const r = await callBridge(VPS_BASE, path, bridgeToken);
       calls = [r];
-      // When the UI passes an explicit action (button click), keep the raw
-      // formatted output to preserve existing diagnostic panels.
-      reply = body.action
-        ? formatResult(action.toUpperCase(), r)
-        : naturalize(action, r, wantsRaw);
+      // Quick-action buttons (body.action present) keep the legacy raw format
+      // so the existing diagnostic panels stay intact.
+      if (body.action) {
+        reply = formatResult(action.toUpperCase(), r);
+      } else {
+        const n = naturalize(action, r);
+        reply = conversational({ ...n, raw: calls, wantsRaw });
+      }
     }
 
     // Log a TERMINAL event for traceability (never includes the token).
