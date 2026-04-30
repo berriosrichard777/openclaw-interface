@@ -244,18 +244,62 @@ const AlertCenterCard = () => {
         });
       }
 
-      // Logs analysis (no content exposure). Use word-boundary matches and
-      // ignore the benign "telegram sendMessage ok" line so it never counts as error.
+      // Logs analysis (no content exposure). Use strict signal matching to
+      // avoid counting benign mentions of the word "error" (e.g. "error: null",
+      // "no error", "No critical errors found", explanatory copy, etc.).
       const logsBody = (logs?.calls?.[0] as CallResult | undefined)?.body;
       const rawLogsText =
         typeof logsBody === "string" ? logsBody : JSON.stringify(logsBody ?? "");
+
       // Strip known benign signals before scanning.
-      const scrubbedLogs = rawLogsText
+      let scrubbedLogs = rawLogsText
         .replace(/telegram\s+sendMessage\s+ok/gi, "")
         .replace(/would\s+evict\s+active\s+session;\s*skipping\s+enforcement/gi, "");
 
-      const hasErrors = /\b(error|fatal|panic|crash|exception)\b/i.test(scrubbedLogs);
-      const hasWarnings = /\b(warn|warning|degraded)\b/i.test(scrubbedLogs);
+      // Remove benign "error: null / none / unknown / false / 0 / []" style fields
+      // in JSON or plain text, so they never trip the error scan.
+      const benignErrorPatterns: RegExp[] = [
+        /"[^"]*error[^"]*"\s*:\s*(null|false|0|""|\[\]|\{\})/gi,
+        /\b(last[_-]?)?error[_-]?(name|code|message|reason)?\s*[:=]\s*(null|none|n\/a|unknown|false|0|"")/gi,
+        /\bno\s+error(s)?\b/gi,
+        /\bno\s+critical\s+errors?\s+found\b/gi,
+        /\b0\s+errors?\b/gi,
+        /\berror[_-]?count\s*[:=]\s*0\b/gi,
+      ];
+      for (const re of benignErrorPatterns) {
+        scrubbedLogs = scrubbedLogs.replace(re, "");
+      }
+
+      // Real error signals only.
+      const realErrorSignals: RegExp[] = [
+        /"logLevelName"\s*:\s*"ERROR"/i,
+        /\blogLevelName\s*[:=]\s*"?ERROR"?/i,
+        /"level"\s*:\s*"error"/i,
+        /\blevel\s*[:=]\s*"?error"?\b/i,
+        /"status"\s*:\s*"error"/i,
+        /\bstatus\s*[:=]\s*"?error"?\b/i,
+        /\bfailed\b/i,
+        /\bexception\b/i,
+        /\bfatal\b/i,
+        /\bpanic\b/i,
+        /\bcrash(ed)?\b/i,
+        /\bconnection\s+refused\b/i,
+        /\btimeout\b/i,
+        /\bHTTP\/?\s*1\.[01]\s+5\d{2}\b/i,
+        /"status(Code)?"\s*:\s*5\d{2}\b/i,
+        /\bstatus(Code)?\s*[:=]\s*5\d{2}\b/i,
+      ];
+      const hasErrors = realErrorSignals.some((re) => re.test(scrubbedLogs));
+
+      // Real warning signals only.
+      const realWarningSignals: RegExp[] = [
+        /"logLevelName"\s*:\s*"WARN(ING)?"/i,
+        /\blogLevelName\s*[:=]\s*"?WARN(ING)?"?/i,
+        /"level"\s*:\s*"warn(ing)?"/i,
+        /\blevel\s*[:=]\s*"?warn(ing)?"?\b/i,
+        /\bdegraded\b/i,
+      ];
+      const hasWarnings = realWarningSignals.some((re) => re.test(scrubbedLogs));
 
       // Avoid double-counting: only emit "Recent errors found" if we found a real
       // error marker AND we didn't already raise a Telegram-specific Critical.
