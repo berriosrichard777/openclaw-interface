@@ -334,6 +334,191 @@ const buildTelegramSummary = (
   return lines.join("\n");
 };
 
+// ---- Natural-language summaries -----------------------------------------
+// Wraps a single bridge call into a friendly status / explanation / next-step
+// summary. Raw technical data is appended only when wantsRaw is true.
+const naturalize = (
+  action: BridgeAction,
+  r: BridgeCallResult,
+  wantsRaw: boolean,
+): string => {
+  const labelMap: Record<string, string> = {
+    "health": "Bridge Health",
+    "system": "System Resources",
+    "gateway-status": "Gateway Link",
+    "status": "Agent Status",
+    "logs": "Recent Logs",
+  };
+  const label = labelMap[action] ?? action.toUpperCase();
+  const ok = r.ok;
+  const status = ok ? "OK" : r.status === 0 ? "UNREACHABLE" : "DEGRADED";
+
+  const lines: string[] = [
+    `${label.toUpperCase()} :: ${status}`,
+    "",
+  ];
+
+  if (action === "health") {
+    lines.push(ok
+      ? "  Bridge responded successfully — OpenClaw is alive and reachable."
+      : "  Bridge did not respond cleanly. The agent may be offline or the link is degraded.");
+    if (!ok) lines.push("  Next step: check Gateway Link and try again in a few seconds.");
+  } else if (action === "system") {
+    const cpu = findNum(r.body, /^cpu([_-]?(pct|percent|usage|load))?$/i);
+    const ram = findRamPercent(r.body);
+    const disk = findNum(r.body, /^(disk|storage)([_-]?(pct|percent|usage))?$/i);
+    lines.push(`  CPU: ${fmtPct(cpu)} · RAM: ${fmtPct(ram)} · Disk: ${fmtPct(disk)}`);
+    const hot = [cpu, ram, disk].some((v) => typeof v === "number" && v >= 90);
+    const warm = [cpu, ram, disk].some((v) => typeof v === "number" && v >= 75);
+    lines.push(hot
+      ? "  System resources are critical — investigate immediately."
+      : warm
+      ? "  System resources are elevated — keep an eye on usage."
+      : "  System resources look normal.");
+    if (hot || warm) lines.push("  Next step: open System Stability Monitor for the full picture.");
+  } else if (action === "gateway-status") {
+    lines.push(ok
+      ? "  Gateway link reports OK."
+      : "  Gateway link is degraded or unreachable.");
+    if (!ok) lines.push("  Next step: re-run diagnostic to confirm whether bridge or gateway is at fault.");
+  } else if (action === "status") {
+    lines.push(ok ? "  General agent status responded successfully." : "  Agent did not return a clean status.");
+  } else if (action === "logs") {
+    const text = typeof r.body === "string" ? r.body : JSON.stringify(r.body ?? "");
+    const errCount = (text.match(/\b(ERROR|FATAL|exception|failed)\b/gi) ?? []).length;
+    const warnCount = (text.match(/\bWARN(ING)?\b/gi) ?? []).length;
+    lines.push(`  Errors: ${errCount} · Warnings: ${warnCount}`);
+    lines.push(errCount === 0 && warnCount === 0
+      ? "  No notable issues found in recent logs."
+      : "  Recent log activity contains warnings or errors — review System Logs for context.");
+  }
+
+  if (wantsRaw) {
+    lines.push("", "RAW ::", typeof r.body === "string" ? r.body : JSON.stringify(r.body, null, 2));
+  } else {
+    lines.push("", "  (type 'details' or 'raw' to see the technical payload)");
+  }
+  return lines.join("\n");
+};
+
+const fmtPct = (v: number | null): string =>
+  v === null || !isFinite(v) ? "unknown" : `${Math.round(v)}%`;
+
+const findNum = (root: unknown, keyRe: RegExp): number | null => {
+  let out: number | null = null;
+  const stack: unknown[] = [root];
+  const seen = new Set<unknown>();
+  while (stack.length) {
+    const n = stack.pop();
+    if (!n || typeof n !== "object" || seen.has(n)) continue;
+    seen.add(n);
+    for (const [k, v] of Object.entries(n as Record<string, unknown>)) {
+      if (SENSITIVE_KEY_RE.test(k)) continue;
+      if (out === null && keyRe.test(k)) {
+        if (typeof v === "number" && isFinite(v)) {
+          out = v > 1 && v <= 100 ? v : v <= 1 ? Math.round(v * 1000) / 10 : v;
+        } else if (typeof v === "string") {
+          const m = v.match(/(\d+(?:\.\d+)?)/);
+          if (m) out = parseFloat(m[1]);
+        }
+      }
+      if (v && typeof v === "object") stack.push(v);
+    }
+  }
+  return out;
+};
+
+const findRamPercent = (root: unknown): number | null => {
+  // Direct percent first.
+  const direct = findNum(root, /^(ram|mem(ory)?)([_-]?(pct|percent|usage))?$/i);
+  if (direct !== null && direct <= 100) return direct;
+  // Compute from used / total.
+  const used = findNum(root, /^(mem(ory)?|ram)[_-]?(used|in[_-]?use)$/i);
+  const total = findNum(root, /^(mem(ory)?|ram)[_-]?(total|max|size)$/i);
+  if (used !== null && total !== null && total > 0) {
+    const p = (used / total) * 100;
+    if (p >= 0 && p <= 100) return p;
+  }
+  return null;
+};
+
+// Stability summary (composes health + system + gateway + telegram).
+const buildStabilitySummary = (
+  health: BridgeCallResult,
+  system: BridgeCallResult,
+  gateway: BridgeCallResult,
+  telegram: BridgeCallResult,
+  logs: BridgeCallResult,
+): string => {
+  const cpu = findNum(system.body, /^cpu([_-]?(pct|percent|usage|load))?$/i);
+  const ram = findRamPercent(system.body);
+  const disk = findNum(system.body, /^(disk|storage)([_-]?(pct|percent|usage))?$/i);
+
+  const bridgeOk = health.ok;
+  const gatewayOk = gateway.ok;
+  const sysOk = system.ok;
+  const tgOk = telegram.ok;
+
+  const hot = [cpu, ram, disk].some((v) => typeof v === "number" && v >= 90);
+  const warm = [cpu, ram, disk].some((v) => typeof v === "number" && v >= 75);
+
+  let verdict: "HEALTHY" | "WARNING" | "CRITICAL" = "HEALTHY";
+  if (!bridgeOk || !gatewayOk || !sysOk || hot) verdict = "CRITICAL";
+  else if (!tgOk || warm || ram === null) verdict = "WARNING";
+
+  return [
+    `SYSTEM STABILITY :: ${verdict}`,
+    "",
+    `  Bridge   : ${bridgeOk ? "OK" : "DOWN"}`,
+    `  Gateway  : ${gatewayOk ? "OK" : "DEGRADED"}`,
+    `  System   : CPU ${fmtPct(cpu)} · RAM ${fmtPct(ram)} · Disk ${fmtPct(disk)}`,
+    `  Telegram : ${tgOk ? "reachable" : "unreachable"}`,
+    "",
+    verdict === "HEALTHY"
+      ? "  All core systems look stable."
+      : verdict === "WARNING"
+      ? "  Some non-critical signals need attention. Open the System Stability Monitor for details."
+      : "  Critical signal detected. Open the System Stability Monitor and Alert Center now.",
+  ].join("\n");
+};
+
+// Alerts summary (lightweight overview based on the same probes).
+const buildAlertsSummary = (
+  health: BridgeCallResult,
+  system: BridgeCallResult,
+  gateway: BridgeCallResult,
+  telegram: BridgeCallResult,
+  logs: BridgeCallResult,
+): string => {
+  const alerts: { sev: "CRIT" | "WARN" | "INFO"; msg: string }[] = [];
+  if (!health.ok) alerts.push({ sev: "CRIT", msg: "Bridge health probe failed." });
+  if (!gateway.ok) alerts.push({ sev: "CRIT", msg: "Gateway link probe failed." });
+  if (!system.ok) alerts.push({ sev: "CRIT", msg: "System snapshot probe failed." });
+
+  const ram = findRamPercent(system.body);
+  if (ram === null) alerts.push({ sev: "INFO", msg: "RAM usage unknown — CPU and Disk evaluated independently." });
+  else if (ram > 90) alerts.push({ sev: "CRIT", msg: `RAM critical (${Math.round(ram)}%).` });
+  else if (ram >= 75) alerts.push({ sev: "WARN", msg: `RAM elevated (${Math.round(ram)}%).` });
+
+  const text = typeof logs.body === "string" ? logs.body : JSON.stringify(logs.body ?? "");
+  if (/\bWARN(ING)?\b/i.test(text)) alerts.push({ sev: "WARN", msg: "Recent warnings found in logs." });
+
+  const counts = { CRIT: 0, WARN: 0, INFO: 0 };
+  for (const a of alerts) counts[a.sev]++;
+
+  const head = `ALERT CENTER :: ${counts.CRIT} Crit · ${counts.WARN} Warn · ${counts.INFO} Info`;
+  if (alerts.length === 0) {
+    return `${head}\n\n  No active alerts. System looks stable.`;
+  }
+  return [
+    head,
+    "",
+    ...alerts.map((a) => `  [${a.sev}] ${a.msg}`),
+    "",
+    "  Open the Alert Center on the Dashboard for the full breakdown.",
+  ].join("\n");
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
