@@ -177,31 +177,64 @@ const AlertCenterCard = () => {
         });
       }
 
-      // Telegram verdict from reply
-      const tgReply = (telegram?.reply ?? "").toUpperCase();
-      const tgPartial = tgReply.includes("PARTIAL OK");
-      const tgError = tgReply.includes("ERROR");
-      const tgRunningFalse = /RUNNING.*FALSE|RUNNING\s*:\s*FALSE/i.test(telegram?.reply ?? "");
+      // Telegram verdict — be strict so a "Partial OK" reply never trips Critical.
+      const tgRaw = telegram?.reply ?? "";
+      const tgHead = tgRaw.split("\n")[0]?.toUpperCase() ?? "";
+      const tgUpper = tgRaw.toUpperCase();
+      const tgCallsOk = okCall(telegram);
 
-      if (tgError) {
+      const tgOperational = tgHead.includes("OPERATIONAL") || tgHead.includes(":: OK");
+      const tgPartial = tgHead.includes("PARTIAL OK") || tgUpper.includes("PARTIAL OK");
+      const tgSendOk = /TELEGRAM\s+SENDMESSAGE\s+OK/i.test(tgRaw);
+
+      // Configured / bot username detection (case-insensitive, simple match)
+      const tgConfiguredFalse = /CONFIGURED\s*[:=]\s*FALSE/i.test(tgRaw);
+      const tgConfiguredTrue = /CONFIGURED\s*[:=]\s*TRUE/i.test(tgRaw);
+      const tgHasBotUsername = /BOT\s*USERNAME\s*[:=]\s*\S+/i.test(tgRaw) &&
+        !/BOT\s*USERNAME\s*[:=]\s*(none|null|n\/a|-)\s*$/im.test(tgRaw);
+
+      // Real telegram error markers (avoid matching the literal label "Telegram Status: ERROR" only,
+      // and never treat OPERATIONAL/PARTIAL OK as error).
+      const tgRunningFalse = /RUNNING\s*[:=]\s*FALSE/i.test(tgRaw);
+      const tgExplicitErrorState =
+        tgHead.includes("ERROR") ||
+        tgHead.includes("FAIL") ||
+        /\b(telegram[^.\n]{0,40}(failed|failure|unreachable|timeout))\b/i.test(tgRaw);
+      const tgLogsHasError = /\btelegram\b[^.\n]{0,80}\b(error|failed|failure|exception)\b/i.test(
+        typeof (logs?.calls?.[0] as CallResult | undefined)?.body === "string"
+          ? ((logs?.calls?.[0] as CallResult).body as string)
+          : JSON.stringify((logs?.calls?.[0] as CallResult | undefined)?.body ?? ""),
+      );
+
+      // Critical only when truly broken — and never when sendMessage is succeeding
+      // or the diagnostic explicitly says Operational/Partial OK.
+      const tgCriticalCandidate =
+        !tgCallsOk ||
+        tgConfiguredFalse ||
+        (tgConfiguredTrue && !tgHasBotUsername) ||
+        tgExplicitErrorState ||
+        tgLogsHasError;
+
+      const tgCritical =
+        tgCriticalCandidate && !tgSendOk && !tgPartial && !tgOperational;
+
+      if (tgCritical) {
         out.push({
           id: "telegram-error",
           severity: "Critical",
           title: "Telegram error",
-          explanation: "Telegram diagnostic reported an error state.",
+          explanation: "Telegram diagnostic reports a failure state (configured/bot/health).",
           action: "Review Telegram Diagnostic and System Logs → Telegram.",
         });
-      } else if (tgPartial) {
+      } else if (tgPartial || (tgRunningFalse && tgSendOk)) {
         out.push({
           id: "telegram-partial",
           severity: "Warning",
           title: "Telegram Partial OK",
-          explanation:
-            "Telegram can send messages, but OpenClaw reports running=false.",
+          explanation: "Telegram can send messages, but OpenClaw reports running=false.",
           action: "Monitor Telegram logs or review plugin runtime.",
         });
-      }
-      if (tgRunningFalse && !tgPartial && !tgError) {
+      } else if (tgRunningFalse && !tgOperational) {
         out.push({
           id: "telegram-runtime-warning",
           severity: "Warning",
@@ -211,12 +244,22 @@ const AlertCenterCard = () => {
         });
       }
 
-      // Logs analysis (no content exposure)
+      // Logs analysis (no content exposure). Use word-boundary matches and
+      // ignore the benign "telegram sendMessage ok" line so it never counts as error.
       const logsBody = (logs?.calls?.[0] as CallResult | undefined)?.body;
-      const logsText = typeof logsBody === "string" ? logsBody : JSON.stringify(logsBody ?? "");
-      const hasErrors = /\b(error|fatal|panic|crash|exception)\b/i.test(logsText);
-      const hasWarnings = /\b(warn|warning|degraded)\b/i.test(logsText);
-      if (hasErrors) {
+      const rawLogsText =
+        typeof logsBody === "string" ? logsBody : JSON.stringify(logsBody ?? "");
+      // Strip known benign signals before scanning.
+      const scrubbedLogs = rawLogsText
+        .replace(/telegram\s+sendMessage\s+ok/gi, "")
+        .replace(/would\s+evict\s+active\s+session;\s*skipping\s+enforcement/gi, "");
+
+      const hasErrors = /\b(error|fatal|panic|crash|exception)\b/i.test(scrubbedLogs);
+      const hasWarnings = /\b(warn|warning|degraded)\b/i.test(scrubbedLogs);
+
+      // Avoid double-counting: only emit "Recent errors found" if we found a real
+      // error marker AND we didn't already raise a Telegram-specific Critical.
+      if (hasErrors && !tgCritical) {
         out.push({
           id: "recent-errors",
           severity: "Critical",
