@@ -62,16 +62,44 @@ const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic" | "telegram-statu
 };
 
 // Interpret a free-text command into a known bridge action.
+// Supports English + Spanish natural phrases. Returns null if no safe match.
 const interpretCommand = (cmd: string): BridgeAction | null => {
   const c = cmd.trim().toLowerCase();
   if (!c) return null;
-  if (/telegram/.test(c)) return "telegram-status";
-  if (/(full[\s_-]*)?diagnostic|sweep|full[\s_-]*scan/.test(c)) return "diagnostic";
-  if (/\blogs?\b|tail|journal|events/.test(c)) return "logs";
+
+  // Telegram
+  if (/telegram|por\s*qu[eé]\s+telegram|revisa\s+telegram/.test(c)) return "telegram-status";
+
+  // Alert Center
+  if (/\balerts?\b|alert\s*center|qu[eé]\s+problemas|warnings?\s+activos|active\s+warnings/.test(c))
+    return "alerts";
+
+  // Stability / overall health
+  if (/stability|estado\s+general|todo\s+est[aá]\s+bien|all\s+(ok|good|fine)|system\s+stability/.test(c))
+    return "stability";
+
+  // Diagnostic
+  if (/(full[\s_-]*)?diagnostic|sweep|full[\s_-]*scan|diagn[oó]stico|haz\s+un\s+diagn/.test(c))
+    return "diagnostic";
+
+  // Logs / errors / warnings
+  if (/\blogs?\b|tail|journal|events|errores?\s+recientes|warnings?\s+recientes|mu[eé]strame\s+logs/.test(c))
+    return "logs";
+
+  // Gateway
   if (/gateway/.test(c)) return "gateway-status";
-  if (/\bhealth\b|ping|alive/.test(c)) return "health";
-  if (/\bsystem\b|uname|host|cpu|mem(ory)?|disk/.test(c)) return "system";
-  if (/\bstatus\b|state|report/.test(c)) return "status";
+
+  // Health / alive / online
+  if (/\bhealth\b|ping|alive|est[aá]\s+vivo|bridge\s+online|check\s+bridge|revisa\s+health/.test(c))
+    return "health";
+
+  // System resources
+  if (/\bsystem\b|uname|host|cpu|ram|mem(ory)?|disk|recursos|estado\s+del\s+sistema/.test(c))
+    return "system";
+
+  // General status
+  if (/\bstatus\b|state|report|estado/.test(c)) return "status";
+
   return null;
 };
 
