@@ -270,28 +270,41 @@ const AlertCenterCard = () => {
         scrubbedLogs = scrubbedLogs.replace(re, "");
       }
 
-      // Real error signals only.
+      // Non-critical file-read warnings (heartbeat / memory / tools): treat as Warning, not Critical.
+      // We detect them BEFORE the real-error scan and then strip them so they don't
+      // trip the generic error matchers.
+      const fileReadWarningPatterns: RegExp[] = [
+        /\bENOENT\b/i,
+        /\bno such file or directory\b/i,
+        /heartbeat[-_]?_meta/i,
+        /memory\/heartbeat/i,
+        /\[tools\]\s*read\s+failed/i,
+      ];
+      const hasFileReadWarning = fileReadWarningPatterns.some((re) => re.test(scrubbedLogs));
+      // Strip these patterns and the surrounding line so the generic "failed/timeout"
+      // matchers below don't re-classify them as Critical.
+      for (const re of fileReadWarningPatterns) {
+        const lineRe = new RegExp(`[^\\n]*${re.source}[^\\n]*`, re.flags.includes("i") ? "gi" : "g");
+        scrubbedLogs = scrubbedLogs.replace(lineRe, "");
+      }
+
+      // Real CRITICAL infra failure signals only — explicit, narrow, and infra-scoped.
       const realErrorSignals: RegExp[] = [
-        /"logLevelName"\s*:\s*"ERROR"/i,
-        /\blogLevelName\s*[:=]\s*"?ERROR"?/i,
-        /"level"\s*:\s*"error"/i,
-        /\blevel\s*[:=]\s*"?error"?\b/i,
-        /"status"\s*:\s*"error"/i,
-        /\bstatus\s*[:=]\s*"?error"?\b/i,
-        /\bfailed\b/i,
-        /\bexception\b/i,
-        /\bfatal\b/i,
-        /\bpanic\b/i,
-        /\bcrash(ed)?\b/i,
+        /\bgateway\s+unreachable\b/i,
+        /\bbridge\s+offline\b/i,
+        /\btelegram\s+disconnected\b/i,
+        /\bwebsocket\s+failed\b/i,
+        /\bauthentication\s+failed\b/i,
         /\bconnection\s+refused\b/i,
-        /\btimeout\b/i,
+        /\b500\s+internal\s+server\s+error\b/i,
+        /\btimeout\s+connecting\s+to\s+gateway\b/i,
+        /\bhealth\s+check\s+failed\b/i,
         /\bHTTP\/?\s*1\.[01]\s+5\d{2}\b/i,
         /"status(Code)?"\s*:\s*5\d{2}\b/i,
-        /\bstatus(Code)?\s*[:=]\s*5\d{2}\b/i,
       ];
       const hasErrors = realErrorSignals.some((re) => re.test(scrubbedLogs));
 
-      // Real warning signals only.
+      // Real warning signals.
       const realWarningSignals: RegExp[] = [
         /"logLevelName"\s*:\s*"WARN(ING)?"/i,
         /\blogLevelName\s*[:=]\s*"?WARN(ING)?"?/i,
@@ -301,14 +314,26 @@ const AlertCenterCard = () => {
       ];
       const hasWarnings = realWarningSignals.some((re) => re.test(scrubbedLogs));
 
+      // Non-critical file read warning gets its own dedicated alert.
+      if (hasFileReadWarning) {
+        out.push({
+          id: "file-read-warning",
+          severity: "Warning",
+          title: "Non-critical file read warning detected",
+          explanation:
+            "Bridge logs reference a missing file (e.g. ENOENT on heartbeat/memory or [tools] read failed). This is usually a transient/optional file and does not mean OpenClaw is down.",
+          action: "Inspect heartbeat/memory/tools paths on the bridge host when convenient.",
+        });
+      }
+
       // Avoid double-counting: only emit "Recent errors found" if we found a real
-      // error marker AND we didn't already raise a Telegram-specific Critical.
+      // infra error signal AND we didn't already raise a Telegram-specific Critical.
       if (hasErrors && !tgCritical) {
         out.push({
           id: "recent-errors",
           severity: "Critical",
           title: "Recent errors found",
-          explanation: "Recent logs contain error-level entries.",
+          explanation: "Recent logs contain real infrastructure failure signals (gateway/bridge/auth/5xx/timeout).",
           action: "Review System Logs → Errors.",
         });
       }

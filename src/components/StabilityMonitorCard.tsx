@@ -266,9 +266,26 @@ const StabilityMonitorCard = () => {
 
       // Look for "error" markers in recent logs (without exposing content).
       const logsBody = (logs?.calls?.[0] as CallResult | undefined)?.body;
-      const logsText = typeof logsBody === "string" ? logsBody : JSON.stringify(logsBody ?? "");
-      const criticalInLogs = /\b(fatal|panic|crash)\b/i.test(logsText);
-      const warningInLogs = /\b(warn|warning|degraded)\b/i.test(logsText);
+      const rawLogsText = typeof logsBody === "string" ? logsBody : JSON.stringify(logsBody ?? "");
+
+      // Strip non-critical file-read noise (ENOENT/heartbeat/memory/[tools] read failed)
+      // so it never escalates the overall verdict to CRITICAL.
+      const benignLogPatterns: RegExp[] = [
+        /[^\n]*\bENOENT\b[^\n]*/gi,
+        /[^\n]*no such file or directory[^\n]*/gi,
+        /[^\n]*heartbeat[-_]?_meta[^\n]*/gi,
+        /[^\n]*memory\/heartbeat[^\n]*/gi,
+        /[^\n]*\[tools\]\s*read\s+failed[^\n]*/gi,
+      ];
+      let scrubbedLogsText = rawLogsText;
+      let fileReadWarning = false;
+      for (const re of benignLogPatterns) {
+        if (re.test(scrubbedLogsText)) fileReadWarning = true;
+        scrubbedLogsText = scrubbedLogsText.replace(re, "");
+      }
+
+      const criticalInLogs = /\b(fatal|panic|crash|connection refused|gateway unreachable|bridge offline|websocket failed|authentication failed|health check failed)\b/i.test(scrubbedLogsText);
+      const warningInLogs = /\b(warn|warning|degraded)\b/i.test(scrubbedLogsText) || fileReadWarning;
       if (criticalInLogs) errs.push("Critical markers in recent logs");
 
       // Resource verdicts: unknown = WARNING (not CRITICAL).
@@ -280,17 +297,24 @@ const StabilityMonitorCard = () => {
       const anyResourceWarn =
         resourceVerdicts.includes("WARNING") || resourceVerdicts.includes("UNKNOWN");
 
+      // Infra-online means: bridge + system + gateway healthy and telegram not in ERROR.
+      const infraOnline =
+        bridgeOnline && systemOk && gatewayVerdict === "OK" && tgVerdict !== "ERROR";
+
       // Overall verdict logic
       // CRITICAL only if Bridge/System/Gateway fail or a real resource is critical.
-      // Telegram PARTIAL OK / unknown RAM only escalate to WARNING.
+      // Logs alone do NOT escalate to CRITICAL when infra is online.
       let overall: Verdict = "OK";
       if (!bridgeOnline || !systemOk || gatewayVerdict === "CRITICAL" || tgVerdict === "ERROR" || anyResourceCritical) {
+        overall = "CRITICAL";
+      } else if (criticalInLogs && !infraOnline) {
         overall = "CRITICAL";
       } else if (
         gatewayVerdict === "WARNING" ||
         tgVerdict === "PARTIAL OK" ||
         tgVerdict === "WARNING" ||
         warningInLogs ||
+        criticalInLogs || // demoted to WARNING when infra is online
         anyResourceWarn
       ) {
         overall = "WARNING";
