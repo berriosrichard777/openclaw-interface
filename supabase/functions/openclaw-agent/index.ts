@@ -281,87 +281,41 @@ const buildTelegramSummary = (
   }
 
   // ---- Verdict ----------------------------------------------------------
-  // OPERATIONAL    → configured + sendMessage ok in logs (even if running=false)
-  // PARTIAL OK     → configured + sendMessage ok but a runtime field disagrees
-  // WARNING / ERROR / OK as before for other cases.
-  let verdict: "OK" | "OPERATIONAL" | "PARTIAL OK" | "WARNING" | "ERROR" = "OK";
-  if (!health.ok || !status.ok) verdict = "WARNING";
-  if (configured === false) verdict = "WARNING";
-  if (running === false) verdict = "WARNING";
-  if (lastError && typeof lastError === "string" && lastError.trim() !== "") verdict = "ERROR";
+  let convoStatus: ConvoStatus = "OK";
+  let summary = "Telegram está operativo.";
+  let nextStep = "";
 
-  // sendMessage success overrides "running=false" warning.
-  if (configured === true && sendMessageOk) {
-    verdict = running === false ? "PARTIAL OK" : "OPERATIONAL";
+  const realError = lastError && typeof lastError === "string" && lastError.trim() !== "";
+
+  if (configured === false) {
+    convoStatus = "Critical";
+    summary = "Telegram no está configurado en OpenClaw.";
+    nextStep = "Revisa la configuración del bot en el backend (read-only desde aquí).";
+  } else if (realError) {
+    convoStatus = "Critical";
+    summary = `Telegram reporta un error reciente (${fmt(lastError)}).`;
+    nextStep = "Revisa System Logs → Errors y el estado del gateway/channel.";
+  } else if (configured === true && sendMessageOk && running === false) {
+    convoStatus = "Warning";
+    summary = "Telegram está parcialmente operativo. Puede enviar mensajes, pero OpenClaw reporta running=false.";
+    nextStep = "Monitorea Telegram logs o revisa el plugin runtime si deja de responder.";
+  } else if (configured === true && sendMessageOk) {
+    convoStatus = "OK";
+    summary = `Telegram está operativo${username ? ` (bot ${fmt(username)})` : ""}. Envíos recientes confirmados en logs.`;
+  } else if (running === false) {
+    convoStatus = "Warning";
+    summary = "Telegram está configurado pero OpenClaw lo reporta como no running, y no hay envíos confirmados en logs.";
+    nextStep = "Monitorea Telegram logs o revisa el plugin runtime.";
+  } else if (!health.ok || !status.ok) {
+    convoStatus = "Warning";
+    summary = "No se pudo confirmar el estado de Telegram porque health/status no respondieron limpio.";
+    nextStep = "Re-ejecuta 'health' y 'gateway' para descartar problemas de bridge.";
+  } else {
+    convoStatus = "OK";
+    summary = `Telegram parece operativo${username ? ` (bot ${fmt(username)})` : ""}.`;
   }
 
-  const headline = (verdict === "OPERATIONAL" || verdict === "PARTIAL OK")
-    ? `TELEGRAM STATUS :: OPERATIONAL / ${verdict === "PARTIAL OK" ? "PARTIAL OK" : "OK"}`
-    : `TELEGRAM STATUS :: ${verdict}`;
-
-  const lines = [
-    headline,
-    "",
-    `  configured                 : ${fmt(configured)}`,
-    `  bot username               : ${fmt(username)}`,
-    `  send message test detected : ${sendMessageOk ? "true" : "false"}`,
-    `  running field              : ${fmt(running)}`,
-    `  last probe                 : ${fmt(lastProbe)}`,
-    `  last error                 : ${fmt(lastError)}`,
-    `  last telegram log ts       : ${fmt(lastTelegramLogTs)}`,
-    `  webhook url                : ${webhookUrl ? "present" : "unknown"}`,
-    `  can join groups            : ${fmt(canJoin)}`,
-    `  can read all messages      : ${fmt(canReadAll)}`,
-    "",
-    `  sources :: health HTTP ${health.status} · status HTTP ${status.status} · logs HTTP ${logs.status}`,
-  ];
-
-  // Contextual explanations.
-  if (configured === true && sendMessageOk && running === false) {
-    lines.push(
-      "",
-      "RUNTIME WARNING ::",
-      "  OpenClaw reports running=false, but Telegram sendMessage succeeded",
-      "  in recent logs. Telegram is operational for outbound messaging;",
-      "  the running flag may reflect a stale or partial runtime probe.",
-    );
-  } else if (configured === true && running === false && !sendMessageOk) {
-    lines.push(
-      "",
-      "EXPLANATION ::",
-      "  Telegram está configurado, pero OpenClaw lo reporta como no running",
-      "  y no se detectaron envíos exitosos en los logs recientes.",
-    );
-  } else if (lastError && typeof lastError === "string" && lastError.trim() !== "") {
-    lines.push(
-      "",
-      "EXPLANATION ::",
-      "  Telegram reporta un error reciente. Revisa los logs y el estado",
-      "  del gateway/channel para más contexto.",
-    );
-  } else if (configured === false) {
-    lines.push(
-      "",
-      "EXPLANATION ::",
-      "  Telegram no está configurado en OpenClaw. Esta acción es read-only,",
-      "  no inicializa ni modifica la integración.",
-    );
-  }
-
-  // Recommended checks: shown unless verdict is plain OK / OPERATIONAL.
-  if (verdict !== "OK" && verdict !== "OPERATIONAL") {
-    lines.push(
-      "",
-      "RECOMMENDED CHECKS ::",
-      "  • Review Telegram runtime/plugin status",
-      "  • Monitor future Telegram logs",
-      "  • Send another test message if needed",
-      "",
-      "  (read-only :: no restart, webhook change, or configuration change performed)",
-    );
-  }
-
-  return lines.join("\n");
+  return { status: convoStatus, summary, nextStep };
 };
 
 // ---- Natural-language summaries -----------------------------------------
