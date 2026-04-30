@@ -433,8 +433,8 @@ const buildStabilitySummary = (
   system: BridgeCallResult,
   gateway: BridgeCallResult,
   telegram: BridgeCallResult,
-  logs: BridgeCallResult,
-): string => {
+  _logs: BridgeCallResult,
+): { status: ConvoStatus; summary: string; nextStep: string } => {
   const cpu = findNum(system.body, /^cpu([_-]?(pct|percent|usage|load))?$/i);
   const ram = findRamPercent(system.body);
   const disk = findNum(system.body, /^(disk|storage)([_-]?(pct|percent|usage))?$/i);
@@ -442,29 +442,43 @@ const buildStabilitySummary = (
   const bridgeOk = health.ok;
   const gatewayOk = gateway.ok;
   const sysOk = system.ok;
-  const tgOk = telegram.ok;
 
-  const hot = [cpu, ram, disk].some((v) => typeof v === "number" && v >= 90);
-  const warm = [cpu, ram, disk].some((v) => typeof v === "number" && v >= 75);
+  // Reuse telegram analyzer for a coherent verdict on Telegram.
+  const tg = buildTelegramSummary(health, telegram, _logs);
+  const tgPartial = tg.status === "Warning";
+  const tgCritical = tg.status === "Critical";
 
-  let verdict: "HEALTHY" | "WARNING" | "CRITICAL" = "HEALTHY";
-  if (!bridgeOk || !gatewayOk || !sysOk || hot) verdict = "CRITICAL";
-  else if (!tgOk || warm || ram === null) verdict = "WARNING";
+  const hot = [cpu, disk].some((v) => typeof v === "number" && v >= 90)
+           || (typeof ram === "number" && ram >= 90);
+  const warm = [cpu, disk].some((v) => typeof v === "number" && v >= 75)
+            || (typeof ram === "number" && ram >= 75);
 
-  return [
-    `SYSTEM STABILITY :: ${verdict}`,
-    "",
-    `  Bridge   : ${bridgeOk ? "OK" : "DOWN"}`,
-    `  Gateway  : ${gatewayOk ? "OK" : "DEGRADED"}`,
-    `  System   : CPU ${fmtPct(cpu)} · RAM ${fmtPct(ram)} · Disk ${fmtPct(disk)}`,
-    `  Telegram : ${tgOk ? "reachable" : "unreachable"}`,
-    "",
-    verdict === "HEALTHY"
-      ? "  All core systems look stable."
-      : verdict === "WARNING"
-      ? "  Some non-critical signals need attention. Open the System Stability Monitor for details."
-      : "  Critical signal detected. Open the System Stability Monitor and Alert Center now.",
-  ].join("\n");
+  const cpuTxt  = `CPU ${fmtPct(cpu)}`;
+  const diskTxt = `Disk ${fmtPct(disk)}`;
+  const ramTxt  = ram === null ? "RAM unknown" : `RAM ${fmtPct(ram)}`;
+
+  let status: ConvoStatus = "OK";
+  if (!bridgeOk || !gatewayOk || !sysOk || hot || tgCritical) status = "Critical";
+  else if (tgPartial || warm) status = "Warning";
+
+  const parts: string[] = [];
+  parts.push(`Bridge ${bridgeOk ? "OK" : "DOWN"}`);
+  parts.push(`Gateway ${gatewayOk ? "OK" : "DEGRADED"}`);
+  parts.push(`Telegram ${tgCritical ? "Critical" : tgPartial ? "Partial OK" : "OK"}`);
+  if (ram === null && !hot && !warm) {
+    parts.push(`${cpuTxt} y ${diskTxt} normales, RAM unknown`);
+  } else {
+    parts.push(`${cpuTxt} · ${ramTxt} · ${diskTxt}`);
+  }
+
+  const summary = `${parts.join(". ")}.`;
+  const nextStep = status === "Critical"
+    ? "Abre el System Stability Monitor y el Alert Center ahora."
+    : status === "Warning"
+    ? "No hay acción urgente; revisa warnings si quieres confirmar."
+    : "";
+
+  return { status, summary, nextStep };
 };
 
 // Alerts summary (lightweight overview based on the same probes).
@@ -474,11 +488,15 @@ const buildAlertsSummary = (
   gateway: BridgeCallResult,
   telegram: BridgeCallResult,
   logs: BridgeCallResult,
-): string => {
+): { status: ConvoStatus; summary: string; nextStep: string } => {
   const alerts: { sev: "CRIT" | "WARN" | "INFO"; msg: string }[] = [];
   if (!health.ok) alerts.push({ sev: "CRIT", msg: "Bridge health probe failed." });
   if (!gateway.ok) alerts.push({ sev: "CRIT", msg: "Gateway link probe failed." });
   if (!system.ok) alerts.push({ sev: "CRIT", msg: "System snapshot probe failed." });
+
+  const tg = buildTelegramSummary(health, telegram, logs);
+  if (tg.status === "Critical") alerts.push({ sev: "CRIT", msg: tg.summary });
+  else if (tg.status === "Warning") alerts.push({ sev: "WARN", msg: tg.summary });
 
   const ram = findRamPercent(system.body);
   if (ram === null) alerts.push({ sev: "INFO", msg: "RAM usage unknown — CPU and Disk evaluated independently." });
@@ -486,22 +504,26 @@ const buildAlertsSummary = (
   else if (ram >= 75) alerts.push({ sev: "WARN", msg: `RAM elevated (${Math.round(ram)}%).` });
 
   const text = typeof logs.body === "string" ? logs.body : JSON.stringify(logs.body ?? "");
-  if (/\bWARN(ING)?\b/i.test(text)) alerts.push({ sev: "WARN", msg: "Recent warnings found in logs." });
+  if (/logLevelName"?\s*:\s*"?WARN/i.test(text) || /\bWARNING\b/i.test(text)) {
+    alerts.push({ sev: "WARN", msg: "Recent warnings found in logs." });
+  }
 
   const counts = { CRIT: 0, WARN: 0, INFO: 0 };
   for (const a of alerts) counts[a.sev]++;
 
-  const head = `ALERT CENTER :: ${counts.CRIT} Crit · ${counts.WARN} Warn · ${counts.INFO} Info`;
+  let status: ConvoStatus = "OK";
+  if (counts.CRIT > 0) status = "Critical";
+  else if (counts.WARN > 0) status = "Warning";
+
   if (alerts.length === 0) {
-    return `${head}\n\n  No active alerts. System looks stable.`;
+    return { status: "OK", summary: "No hay alertas activas. El sistema parece estable.", nextStep: "" };
   }
-  return [
-    head,
-    "",
-    ...alerts.map((a) => `  [${a.sev}] ${a.msg}`),
-    "",
-    "  Open the Alert Center on the Dashboard for the full breakdown.",
-  ].join("\n");
+
+  const summary =
+    `${counts.CRIT} Crit · ${counts.WARN} Warn · ${counts.INFO} Info. ` +
+    alerts.slice(0, 3).map((a) => `[${a.sev}] ${a.msg}`).join(" ");
+  const nextStep = "Abre el Alert Center en el Dashboard para el detalle completo.";
+  return { status, summary, nextStep };
 };
 
 Deno.serve(async (req) => {
