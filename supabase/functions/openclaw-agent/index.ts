@@ -194,11 +194,41 @@ const fmt = (v: unknown): string => {
   }
 };
 
+// ---- Conversational response formatter ---------------------------------
+// Standard format used across all natural-language replies:
+//   Status:   OK / Warning / Critical / Blocked
+//   Summary:  short natural-language explanation
+//   Next step: concrete recommendation (optional)
+//   Details:  raw payload, only when wantsRaw is true
+type ConvoStatus = "OK" | "Warning" | "Critical" | "Blocked";
+
+const conversational = (opts: {
+  status: ConvoStatus;
+  summary: string;
+  nextStep?: string;
+  raw?: BridgeCallResult[];
+  wantsRaw?: boolean;
+}): string => {
+  const lines: string[] = [
+    `Status: ${opts.status}`,
+    `Summary: ${opts.summary}`,
+  ];
+  if (opts.nextStep && opts.nextStep.trim()) {
+    lines.push(`Next step: ${opts.nextStep}`);
+  }
+  if (opts.wantsRaw && opts.raw && opts.raw.length) {
+    lines.push("", "Details:", ...opts.raw.map((c) => formatResult(c.endpoint, c)));
+  } else {
+    lines.push("", "(type 'details' or 'raw' to see the technical payload)");
+  }
+  return lines.join("\n");
+};
+
 const buildTelegramSummary = (
   health: BridgeCallResult,
   status: BridgeCallResult,
   logs: BridgeCallResult,
-): string => {
+): { status: ConvoStatus; summary: string; nextStep: string } => {
   // Try to locate a "telegram" sub-object first; fall back to root scans.
   const sources: unknown[] = [];
   for (const c of [health, status]) {
