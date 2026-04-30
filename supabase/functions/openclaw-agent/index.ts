@@ -570,12 +570,11 @@ Deno.serve(async (req) => {
     // SECURITY GUARD :: forbidden intents are rejected locally and never
     // forwarded to the VPS bridge. Only safe read-only diagnostics are allowed.
     if (!body.action && isForbidden(body.command)) {
-      const refusal =
-        "REQUEST BLOCKED ::\n" +
-        "  This action is not allowed from Command Chat. Only safe read-only " +
-        "diagnostics are enabled.\n\n" +
-        "  Allowed intents :: health · system · gateway · logs · diagnostic · " +
-        "telegram · stability · alerts.";
+      const refusal = conversational({
+        status: "Blocked",
+        summary: "Esta acción no está permitida desde Command Chat. Solo diagnósticos seguros read-only están habilitados.",
+        nextStep: "Usa health, system, gateway, logs, diagnostic, telegram, stability o alerts.",
+      });
       await supabase.from("activity_logs").insert({
         user_id: userId,
         source: "TERMINAL",
