@@ -138,6 +138,30 @@ const callBridge = async (
   }
 };
 
+// Tolerant probe-success check. A probe counts as OK when ANY of these hold:
+//   - HTTP 2xx (res.ok)
+//   - response.ok === true
+//   - response.data.ok === true
+//   - response.body.ok === true
+//   - raw text contains "ok":true
+// We intentionally IGNORE these as failure signals:
+//   running=false, error=null, lastError=null, status="unknown",
+//   tokenSource="none", internal warnings, or "Telegram Partial OK".
+const isProbeOk = (r: BridgeCallResult): boolean => {
+  if (r.status >= 200 && r.status < 300) return true;
+  const b = r.body as any;
+  if (b && typeof b === "object") {
+    if (b.ok === true) return true;
+    if (b.data && typeof b.data === "object" && b.data.ok === true) return true;
+    if (b.body && typeof b.body === "object" && b.body.ok === true) return true;
+  }
+  const text = typeof r.body === "string" ? r.body : (() => {
+    try { return JSON.stringify(r.body ?? ""); } catch { return ""; }
+  })();
+  if (/"ok"\s*:\s*true/i.test(text)) return true;
+  return false;
+};
+
 const formatResult = (label: string, r: BridgeCallResult): string => {
   const head = `▸ ${label}  [${r.endpoint}]  ::  HTTP ${r.status}${r.ok ? "" : "  ✖"}`;
   const json = typeof r.body === "string"
