@@ -312,7 +312,7 @@ const buildTelegramSummary = (
 
   const realError = lastError && typeof lastError === "string" && lastError.trim() !== "";
   const healthOk = isProbeOk(health);
-  const gatewayOk = isProbeOk(status); // 'status' arg is health/gateway probe
+  const gatewayOk = gateway ? isProbeOk(gateway) : isProbeOk(status);
   const probesOk = healthOk && gatewayOk;
   const hasBot = configured === true && !!username;
 
