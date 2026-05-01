@@ -295,17 +295,24 @@ const buildTelegramSummary = (
     convoStatus = "Critical";
     summary = `Telegram reporta un error reciente (${fmt(lastError)}).`;
     nextStep = "Revisa System Logs → Errors y el estado del gateway/channel.";
-  } else if (configured === true && sendMessageOk && running === false) {
-    convoStatus = "Warning";
-    summary = "Telegram está parcialmente operativo. Puede enviar mensajes, pero OpenClaw reporta running=false.";
-    nextStep = "Monitorea Telegram logs o revisa el plugin runtime si deja de responder.";
-  } else if (configured === true && sendMessageOk) {
-    convoStatus = "OK";
-    summary = `Telegram está operativo${username ? ` (bot ${fmt(username)})` : ""}. Envíos recientes confirmados en logs.`;
+  } else if (sendMessageOk) {
+    // Envíos confirmados en logs → al menos parcialmente operativo.
+    if (running === false) {
+      convoStatus = "Warning";
+      summary = "Telegram está parcialmente operativo. Puede enviar mensajes, pero OpenClaw reporta running=false.";
+      nextStep = "Monitorea Telegram logs o revisa el plugin runtime si deja de responder.";
+    } else {
+      convoStatus = "OK";
+      summary = `Telegram está operativo${username ? ` (bot ${fmt(username)})` : ""}. Envíos recientes confirmados en logs.`;
+    }
   } else if (running === false) {
     convoStatus = "Warning";
-    summary = "Telegram está configurado pero OpenClaw lo reporta como no running, y no hay envíos confirmados en logs.";
+    summary = "Telegram está configurado, pero no encontré envíos confirmados en los logs recientes.";
     nextStep = "Monitorea Telegram logs o revisa el plugin runtime.";
+  } else if (configured === true) {
+    convoStatus = "Warning";
+    summary = "Telegram está configurado, pero no encontré envíos confirmados en los logs recientes.";
+    nextStep = "Envía un mensaje de prueba o revisa Telegram logs.";
   } else if (!health.ok || !status.ok) {
     convoStatus = "Warning";
     summary = "No se pudo confirmar el estado de Telegram porque health/status no respondieron limpio.";
