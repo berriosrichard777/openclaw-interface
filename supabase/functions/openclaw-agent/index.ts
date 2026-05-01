@@ -531,11 +531,11 @@ const buildAlertsSummary = (
   logs: BridgeCallResult,
 ): { status: ConvoStatus; summary: string; nextStep: string } => {
   const alerts: { sev: "CRIT" | "WARN" | "INFO"; msg: string }[] = [];
-  if (!health.ok) alerts.push({ sev: "CRIT", msg: "Bridge health probe failed." });
-  if (!gateway.ok) alerts.push({ sev: "CRIT", msg: "Gateway link probe failed." });
-  if (!system.ok) alerts.push({ sev: "CRIT", msg: "System snapshot probe failed." });
+  if (!isProbeOk(health)) alerts.push({ sev: "CRIT", msg: "Bridge health probe failed." });
+  if (!isProbeOk(gateway)) alerts.push({ sev: "CRIT", msg: "Gateway link probe failed." });
+  if (!isProbeOk(system)) alerts.push({ sev: "CRIT", msg: "System snapshot probe failed." });
 
-  const tg = buildTelegramSummary(health, telegram, logs);
+  const tg = buildTelegramSummary(health, telegram, logs, gateway);
   if (tg.status === "Critical") alerts.push({ sev: "CRIT", msg: tg.summary });
   else if (tg.status === "Warning") alerts.push({ sev: "WARN", msg: tg.summary });
 
