@@ -306,42 +306,51 @@ const buildTelegramSummary = (
   }
 
   // ---- Verdict ----------------------------------------------------------
-  // Telegram verdict relies PRIMARILY on the telegram-status probe + logs.
-  // health / gateway are NOT used to downgrade Telegram unless the telegram
-  // probe itself failed (network error, timeout, non-2xx, ok:false).
+  // Telegram verdict uses ONLY /api/openclaw/status + /api/openclaw/logs.
+  // There is NO separate telegram-status endpoint.
+  // health / gateway are NEVER used to downgrade Telegram.
   let convoStatus: ConvoStatus = "OK";
   let summary = "Telegram está operativo.";
   let nextStep = "";
 
   const realError = lastError && typeof lastError === "string" && lastError.trim() !== "";
-  const telegramProbeOk = isProbeOk(status);
   const hasBot = configured === true && !!username;
+  // Did /api/openclaw/status return *any* telegram-shaped data at all?
+  const hasAnyTelegramData =
+    configured !== undefined ||
+    username !== undefined ||
+    running !== undefined ||
+    webhookUrl !== undefined ||
+    canJoin !== undefined ||
+    canReadAll !== undefined;
+  const statusProbeOk = isProbeOk(status);
 
-  if (!telegramProbeOk) {
-    convoStatus = "Warning";
-    summary = "No se pudo confirmar Telegram: la probe telegram-status no respondió limpio (timeout, non-2xx u ok:false).";
-    nextStep = "Re-ejecuta 'telegram' en unos segundos o revisa el bridge.";
-  } else if (configured === false) {
-    convoStatus = "Critical";
-    summary = "Telegram no está configurado en OpenClaw.";
-    nextStep = "Revisa la configuración del bot en el backend (read-only desde aquí).";
-  } else if (configured === true && !username) {
-    convoStatus = "Warning";
-    summary = "Telegram está configurado pero no se detectó bot username.";
-    nextStep = "Verifica el token del bot y el username en la configuración.";
-  } else if (realError) {
-    convoStatus = "Warning";
-    summary = `Telegram reporta un error reciente (${fmt(lastError)}).`;
-    nextStep = "Revisa Telegram logs si no responde.";
-  } else if (sendMessageOk) {
+  if (sendMessageOk && hasBot) {
     convoStatus = "Warning";
     summary = "Telegram está parcialmente operativo. Puede enviar mensajes, pero OpenClaw reporta running=false.";
     nextStep = "Monitorea Telegram logs o revisa el plugin runtime si deja de responder.";
   } else if (hasBot) {
-    // configured:true + bot username present → mínimo Warning, nunca "no confirmado".
     convoStatus = "Warning";
-    summary = "Telegram está configurado. OpenClaw reporta estado parcial o running=false.";
+    summary = "Telegram está configurado. OpenClaw lo reporta como Partial OK o running=false.";
     nextStep = "Revisa Telegram logs si no responde.";
+  } else if (configured === true && !username) {
+    convoStatus = "Warning";
+    summary = "Telegram está configurado pero no se detectó bot username.";
+    nextStep = "Verifica el token del bot y el username en la configuración.";
+  } else if (configured === false) {
+    convoStatus = "Critical";
+    summary = "Telegram no está configurado en OpenClaw.";
+    nextStep = "Revisa la configuración del bot en el backend (read-only desde aquí).";
+  } else if (realError) {
+    convoStatus = "Warning";
+    summary = `Telegram reporta un error reciente (${fmt(lastError)}).`;
+    nextStep = "Revisa Telegram logs si no responde.";
+  } else if (!statusProbeOk && !hasAnyTelegramData) {
+    // Only fall back to "no se pudo confirmar" when status really failed
+    // AND there is no telegram-shaped data anywhere in the payload.
+    convoStatus = "Warning";
+    summary = "No se pudo confirmar Telegram: /api/openclaw/status no respondió limpio (timeout, non-2xx u ok:false) y no se encontraron datos de Telegram.";
+    nextStep = "Re-ejecuta 'telegram' en unos segundos o revisa el bridge.";
   } else {
     convoStatus = "OK";
     summary = `Telegram parece operativo${username ? ` (bot ${fmt(username)})` : ""}.`;
