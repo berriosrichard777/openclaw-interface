@@ -310,6 +310,10 @@ const buildTelegramSummary = (
   let nextStep = "";
 
   const realError = lastError && typeof lastError === "string" && lastError.trim() !== "";
+  const healthOk = isProbeOk(health);
+  const gatewayOk = isProbeOk(status); // 'status' arg is health/gateway probe
+  const probesOk = healthOk && gatewayOk;
+  const hasBot = configured === true && !!username;
 
   if (configured === false) {
     convoStatus = "Critical";
@@ -320,7 +324,6 @@ const buildTelegramSummary = (
     summary = `Telegram reporta un error reciente (${fmt(lastError)}).`;
     nextStep = "Revisa System Logs → Errors y el estado del gateway/channel.";
   } else if (sendMessageOk) {
-    // Envíos confirmados en logs → al menos parcialmente operativo.
     if (running === false) {
       convoStatus = "Warning";
       summary = "Telegram está parcialmente operativo. Puede enviar mensajes, pero OpenClaw reporta running=false.";
@@ -329,6 +332,12 @@ const buildTelegramSummary = (
       convoStatus = "OK";
       summary = `Telegram está operativo${username ? ` (bot ${fmt(username)})` : ""}. Envíos recientes confirmados en logs.`;
     }
+  } else if (probesOk && hasBot) {
+    // Health + gateway están OK y Telegram está configurado con bot username.
+    // Reportar como Warning, no como "no confirmado".
+    convoStatus = "Warning";
+    summary = "Telegram está configurado, pero no encontré envíos confirmados en los logs recientes.";
+    nextStep = "Envía un mensaje de prueba o revisa Telegram logs.";
   } else if (running === false) {
     convoStatus = "Warning";
     summary = "Telegram está configurado, pero no encontré envíos confirmados en los logs recientes.";
@@ -337,9 +346,9 @@ const buildTelegramSummary = (
     convoStatus = "Warning";
     summary = "Telegram está configurado, pero no encontré envíos confirmados en los logs recientes.";
     nextStep = "Envía un mensaje de prueba o revisa Telegram logs.";
-  } else if (!health.ok || !status.ok) {
+  } else if (!probesOk) {
     convoStatus = "Warning";
-    summary = "No se pudo confirmar el estado de Telegram porque health/status no respondieron limpio.";
+    summary = "No se pudo confirmar el estado de Telegram porque health o gateway no respondieron limpio.";
     nextStep = "Re-ejecuta 'health' y 'gateway' para descartar problemas de bridge.";
   } else {
     convoStatus = "OK";
