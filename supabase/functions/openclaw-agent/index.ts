@@ -366,7 +366,7 @@ const naturalize = (
   action: BridgeAction,
   r: BridgeCallResult,
 ): { status: ConvoStatus; summary: string; nextStep: string } => {
-  const ok = r.ok;
+  const ok = isProbeOk(r);
 
   if (action === "health") {
     return ok
