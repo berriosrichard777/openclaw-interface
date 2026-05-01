@@ -306,51 +306,42 @@ const buildTelegramSummary = (
   }
 
   // ---- Verdict ----------------------------------------------------------
+  // Telegram verdict relies PRIMARILY on the telegram-status probe + logs.
+  // health / gateway are NOT used to downgrade Telegram unless the telegram
+  // probe itself failed (network error, timeout, non-2xx, ok:false).
   let convoStatus: ConvoStatus = "OK";
   let summary = "Telegram está operativo.";
   let nextStep = "";
 
   const realError = lastError && typeof lastError === "string" && lastError.trim() !== "";
-  const healthOk = isProbeOk(health);
-  const gatewayOk = gateway ? isProbeOk(gateway) : isProbeOk(status);
-  const probesOk = healthOk && gatewayOk;
+  const telegramProbeOk = isProbeOk(status);
   const hasBot = configured === true && !!username;
 
-  if (configured === false) {
+  if (!telegramProbeOk) {
+    convoStatus = "Warning";
+    summary = "No se pudo confirmar Telegram: la probe telegram-status no respondió limpio (timeout, non-2xx u ok:false).";
+    nextStep = "Re-ejecuta 'telegram' en unos segundos o revisa el bridge.";
+  } else if (configured === false) {
     convoStatus = "Critical";
     summary = "Telegram no está configurado en OpenClaw.";
     nextStep = "Revisa la configuración del bot en el backend (read-only desde aquí).";
+  } else if (configured === true && !username) {
+    convoStatus = "Warning";
+    summary = "Telegram está configurado pero no se detectó bot username.";
+    nextStep = "Verifica el token del bot y el username en la configuración.";
   } else if (realError) {
-    convoStatus = "Critical";
+    convoStatus = "Warning";
     summary = `Telegram reporta un error reciente (${fmt(lastError)}).`;
-    nextStep = "Revisa System Logs → Errors y el estado del gateway/channel.";
+    nextStep = "Revisa Telegram logs si no responde.";
   } else if (sendMessageOk) {
-    if (running === false) {
-      convoStatus = "Warning";
-      summary = "Telegram está parcialmente operativo. Puede enviar mensajes, pero OpenClaw reporta running=false.";
-      nextStep = "Monitorea Telegram logs o revisa el plugin runtime si deja de responder.";
-    } else {
-      convoStatus = "OK";
-      summary = `Telegram está operativo${username ? ` (bot ${fmt(username)})` : ""}. Envíos recientes confirmados en logs.`;
-    }
-  } else if (probesOk && hasBot) {
-    // Health + gateway están OK y Telegram está configurado con bot username.
-    // Reportar como Warning, no como "no confirmado".
     convoStatus = "Warning";
-    summary = "Telegram está configurado, pero no encontré envíos confirmados en los logs recientes.";
-    nextStep = "Envía un mensaje de prueba o revisa Telegram logs.";
-  } else if (running === false) {
+    summary = "Telegram está parcialmente operativo. Puede enviar mensajes, pero OpenClaw reporta running=false.";
+    nextStep = "Monitorea Telegram logs o revisa el plugin runtime si deja de responder.";
+  } else if (hasBot) {
+    // configured:true + bot username present → mínimo Warning, nunca "no confirmado".
     convoStatus = "Warning";
-    summary = "Telegram está configurado, pero no encontré envíos confirmados en los logs recientes.";
-    nextStep = "Monitorea Telegram logs o revisa el plugin runtime.";
-  } else if (configured === true) {
-    convoStatus = "Warning";
-    summary = "Telegram está configurado, pero no encontré envíos confirmados en los logs recientes.";
-    nextStep = "Envía un mensaje de prueba o revisa Telegram logs.";
-  } else if (!probesOk) {
-    convoStatus = "Warning";
-    summary = "No se pudo confirmar el estado de Telegram porque health o gateway no respondieron limpio.";
-    nextStep = "Re-ejecuta 'health' y 'gateway' para descartar problemas de bridge.";
+    summary = "Telegram está configurado. OpenClaw reporta estado parcial o running=false.";
+    nextStep = "Revisa Telegram logs si no responde.";
   } else {
     convoStatus = "OK";
     summary = `Telegram parece operativo${username ? ` (bot ${fmt(username)})` : ""}.`;
