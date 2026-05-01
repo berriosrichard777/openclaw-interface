@@ -480,12 +480,12 @@ const buildStabilitySummary = (
   const ram = findRamPercent(system.body);
   const disk = findNum(system.body, /^(disk|storage)([_-]?(pct|percent|usage))?$/i);
 
-  const bridgeOk = health.ok;
-  const gatewayOk = gateway.ok;
-  const sysOk = system.ok;
+  const bridgeOk = isProbeOk(health);
+  const gatewayOk = isProbeOk(gateway);
+  const sysOk = isProbeOk(system);
 
   // Reuse telegram analyzer for a coherent verdict on Telegram.
-  const tg = buildTelegramSummary(health, telegram, _logs);
+  const tg = buildTelegramSummary(health, telegram, _logs, gateway);
   const tgPartial = tg.status === "Warning";
   const tgCritical = tg.status === "Critical";
 
