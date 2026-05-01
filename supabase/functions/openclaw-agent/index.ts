@@ -138,6 +138,30 @@ const callBridge = async (
   }
 };
 
+// Tolerant probe-success check. A probe counts as OK when ANY of these hold:
+//   - HTTP 2xx (res.ok)
+//   - response.ok === true
+//   - response.data.ok === true
+//   - response.body.ok === true
+//   - raw text contains "ok":true
+// We intentionally IGNORE these as failure signals:
+//   running=false, error=null, lastError=null, status="unknown",
+//   tokenSource="none", internal warnings, or "Telegram Partial OK".
+const isProbeOk = (r: BridgeCallResult): boolean => {
+  if (r.status >= 200 && r.status < 300) return true;
+  const b = r.body as any;
+  if (b && typeof b === "object") {
+    if (b.ok === true) return true;
+    if (b.data && typeof b.data === "object" && b.data.ok === true) return true;
+    if (b.body && typeof b.body === "object" && b.body.ok === true) return true;
+  }
+  const text = typeof r.body === "string" ? r.body : (() => {
+    try { return JSON.stringify(r.body ?? ""); } catch { return ""; }
+  })();
+  if (/"ok"\s*:\s*true/i.test(text)) return true;
+  return false;
+};
+
 const formatResult = (label: string, r: BridgeCallResult): string => {
   const head = `▸ ${label}  [${r.endpoint}]  ::  HTTP ${r.status}${r.ok ? "" : "  ✖"}`;
   const json = typeof r.body === "string"
@@ -228,6 +252,7 @@ const buildTelegramSummary = (
   health: BridgeCallResult,
   status: BridgeCallResult,
   logs: BridgeCallResult,
+  gateway?: BridgeCallResult,
 ): { status: ConvoStatus; summary: string; nextStep: string } => {
   // Try to locate a "telegram" sub-object first; fall back to root scans.
   const sources: unknown[] = [];
@@ -286,6 +311,10 @@ const buildTelegramSummary = (
   let nextStep = "";
 
   const realError = lastError && typeof lastError === "string" && lastError.trim() !== "";
+  const healthOk = isProbeOk(health);
+  const gatewayOk = gateway ? isProbeOk(gateway) : isProbeOk(status);
+  const probesOk = healthOk && gatewayOk;
+  const hasBot = configured === true && !!username;
 
   if (configured === false) {
     convoStatus = "Critical";
@@ -296,7 +325,6 @@ const buildTelegramSummary = (
     summary = `Telegram reporta un error reciente (${fmt(lastError)}).`;
     nextStep = "Revisa System Logs → Errors y el estado del gateway/channel.";
   } else if (sendMessageOk) {
-    // Envíos confirmados en logs → al menos parcialmente operativo.
     if (running === false) {
       convoStatus = "Warning";
       summary = "Telegram está parcialmente operativo. Puede enviar mensajes, pero OpenClaw reporta running=false.";
@@ -305,6 +333,12 @@ const buildTelegramSummary = (
       convoStatus = "OK";
       summary = `Telegram está operativo${username ? ` (bot ${fmt(username)})` : ""}. Envíos recientes confirmados en logs.`;
     }
+  } else if (probesOk && hasBot) {
+    // Health + gateway están OK y Telegram está configurado con bot username.
+    // Reportar como Warning, no como "no confirmado".
+    convoStatus = "Warning";
+    summary = "Telegram está configurado, pero no encontré envíos confirmados en los logs recientes.";
+    nextStep = "Envía un mensaje de prueba o revisa Telegram logs.";
   } else if (running === false) {
     convoStatus = "Warning";
     summary = "Telegram está configurado, pero no encontré envíos confirmados en los logs recientes.";
@@ -313,9 +347,9 @@ const buildTelegramSummary = (
     convoStatus = "Warning";
     summary = "Telegram está configurado, pero no encontré envíos confirmados en los logs recientes.";
     nextStep = "Envía un mensaje de prueba o revisa Telegram logs.";
-  } else if (!health.ok || !status.ok) {
+  } else if (!probesOk) {
     convoStatus = "Warning";
-    summary = "No se pudo confirmar el estado de Telegram porque health/status no respondieron limpio.";
+    summary = "No se pudo confirmar el estado de Telegram porque health o gateway no respondieron limpio.";
     nextStep = "Re-ejecuta 'health' y 'gateway' para descartar problemas de bridge.";
   } else {
     convoStatus = "OK";
@@ -332,7 +366,7 @@ const naturalize = (
   action: BridgeAction,
   r: BridgeCallResult,
 ): { status: ConvoStatus; summary: string; nextStep: string } => {
-  const ok = r.ok;
+  const ok = isProbeOk(r);
 
   if (action === "health") {
     return ok
@@ -446,12 +480,12 @@ const buildStabilitySummary = (
   const ram = findRamPercent(system.body);
   const disk = findNum(system.body, /^(disk|storage)([_-]?(pct|percent|usage))?$/i);
 
-  const bridgeOk = health.ok;
-  const gatewayOk = gateway.ok;
-  const sysOk = system.ok;
+  const bridgeOk = isProbeOk(health);
+  const gatewayOk = isProbeOk(gateway);
+  const sysOk = isProbeOk(system);
 
   // Reuse telegram analyzer for a coherent verdict on Telegram.
-  const tg = buildTelegramSummary(health, telegram, _logs);
+  const tg = buildTelegramSummary(health, telegram, _logs, gateway);
   const tgPartial = tg.status === "Warning";
   const tgCritical = tg.status === "Critical";
 
@@ -497,11 +531,11 @@ const buildAlertsSummary = (
   logs: BridgeCallResult,
 ): { status: ConvoStatus; summary: string; nextStep: string } => {
   const alerts: { sev: "CRIT" | "WARN" | "INFO"; msg: string }[] = [];
-  if (!health.ok) alerts.push({ sev: "CRIT", msg: "Bridge health probe failed." });
-  if (!gateway.ok) alerts.push({ sev: "CRIT", msg: "Gateway link probe failed." });
-  if (!system.ok) alerts.push({ sev: "CRIT", msg: "System snapshot probe failed." });
+  if (!isProbeOk(health)) alerts.push({ sev: "CRIT", msg: "Bridge health probe failed." });
+  if (!isProbeOk(gateway)) alerts.push({ sev: "CRIT", msg: "Gateway link probe failed." });
+  if (!isProbeOk(system)) alerts.push({ sev: "CRIT", msg: "System snapshot probe failed." });
 
-  const tg = buildTelegramSummary(health, telegram, logs);
+  const tg = buildTelegramSummary(health, telegram, logs, gateway);
   if (tg.status === "Critical") alerts.push({ sev: "CRIT", msg: tg.summary });
   else if (tg.status === "Warning") alerts.push({ sev: "WARN", msg: tg.summary });
 
@@ -662,13 +696,14 @@ Deno.serve(async (req) => {
         wantsRaw,
       });
     } else if (action === "telegram-status") {
-      const [h, s, l] = await Promise.all([
+      const [h, s, gw, l] = await Promise.all([
         callBridge(VPS_BASE, "/api/openclaw/health", bridgeToken),
         callBridge(VPS_BASE, "/api/openclaw/status", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/gateway-status", bridgeToken),
         callBridge(VPS_BASE, "/api/openclaw/logs?lines=100", bridgeToken),
       ]);
-      calls = [h, s, l];
-      const tg = buildTelegramSummary(h, s, l);
+      calls = [h, s, gw, l];
+      const tg = buildTelegramSummary(h, s, l, gw);
       reply = conversational({ ...tg, raw: calls, wantsRaw });
     } else if (action === "stability") {
       const [h, sys, gw, tg, lg] = await Promise.all([
