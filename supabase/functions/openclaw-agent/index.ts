@@ -252,6 +252,7 @@ const buildTelegramSummary = (
   health: BridgeCallResult,
   status: BridgeCallResult,
   logs: BridgeCallResult,
+  gateway?: BridgeCallResult,
 ): { status: ConvoStatus; summary: string; nextStep: string } => {
   // Try to locate a "telegram" sub-object first; fall back to root scans.
   const sources: unknown[] = [];
