@@ -696,13 +696,14 @@ Deno.serve(async (req) => {
         wantsRaw,
       });
     } else if (action === "telegram-status") {
-      const [h, s, l] = await Promise.all([
+      const [h, s, gw, l] = await Promise.all([
         callBridge(VPS_BASE, "/api/openclaw/health", bridgeToken),
         callBridge(VPS_BASE, "/api/openclaw/status", bridgeToken),
+        callBridge(VPS_BASE, "/api/openclaw/gateway-status", bridgeToken),
         callBridge(VPS_BASE, "/api/openclaw/logs?lines=100", bridgeToken),
       ]);
-      calls = [h, s, l];
-      const tg = buildTelegramSummary(h, s, l);
+      calls = [h, s, gw, l];
+      const tg = buildTelegramSummary(h, s, l, gw);
       reply = conversational({ ...tg, raw: calls, wantsRaw });
     } else if (action === "stability") {
       const [h, sys, gw, tg, lg] = await Promise.all([
