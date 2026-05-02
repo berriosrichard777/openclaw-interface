@@ -7,9 +7,18 @@ import { useOperator } from "@/hooks/useOperator";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import SystemLogsPanel from "@/components/SystemLogsPanel";
+import StatusBar, { type SystemMetrics } from "@/components/chat/StatusBar";
+import AgentCard, { type Verdict } from "@/components/chat/AgentCard";
 
-type Verdict = "OK" | "Warning" | "Critical" | "Blocked";
-type Msg = { id: string; role: "operator" | "agent"; content: string; created_at: string; verdict?: Verdict | null };
+type Msg = {
+  id: string;
+  role: "operator" | "agent";
+  content: string;
+  created_at: string;
+  verdict?: Verdict | null;
+  rawCalls?: unknown;
+  suggestions?: string[];
+};
 
 type BridgeAction =
   | "logs"
@@ -22,8 +31,6 @@ type BridgeAction =
   | "stability"
   | "alerts";
 
-// Local copy of forbidden patterns. The edge function enforces this again
-// server-side; this is just a fast first line of defence.
 const FORBIDDEN_PATTERNS: RegExp[] = [
   /\bdelete\b/i, /\bremove\b/i, /\brm\s+-/i, /\bdrop\b/i, /\bpurge\b/i,
   /\bstop\s+(server|service|bot|gateway|telegram|docker|bridge)\b/i,
@@ -45,16 +52,9 @@ const HELP_REPLY = [
   "I couldn't map that to a safe diagnostic intent.",
   "",
   "Try natural phrases like:",
-  "  • 'check health'   · 'bridge online?'   · 'está vivo?'",
-  "  • 'system status'  · 'cpu ram disk'     · 'recursos'",
-  "  • 'gateway status' · 'check gateway'",
-  "  • 'show logs'      · 'errores recientes'",
-  "  • 'full diagnostic'· 'haz un diagnóstico'",
-  "  • 'check telegram' · 'por qué telegram no responde?'",
-  "  • 'stability'      · 'todo está bien?'",
-  "  • 'alerts'         · 'qué problemas hay?'",
-  "",
-  "Add 'details' or 'raw' to any of the above to see the technical payload.",
+  "  • 'check health'   · 'system status'   · 'gateway status'",
+  "  • 'show logs'      · 'full diagnostic' · 'check telegram'",
+  "  • 'stability'      · 'alerts'",
 ].join("\n");
 
 type ResolvedCommand =
@@ -64,62 +64,115 @@ type ResolvedCommand =
 const resolveCommand = (raw: string): ResolvedCommand => {
   const c = raw.trim().toLowerCase().replace(/^\/+/, "");
   if (!c) return { kind: "local", reply: HELP_REPLY };
-
   if (FORBIDDEN_PATTERNS.some((re) => re.test(c)))
     return { kind: "local", reply: FORBIDDEN_REPLY };
 
-  // Telegram
   if (/telegram|por\s*qu[eé]\s+telegram|revisa\s+telegram/.test(c))
     return { kind: "action", action: "telegram-status", label: "Telegram Status" };
-
-  // Alerts
   if (/\balerts?\b|alert\s*center|qu[eé]\s+problemas|warnings?\s+activos/.test(c))
     return { kind: "action", action: "alerts", label: "Alert Center" };
-
-  // Stability
   if (/stability|estado\s+general|todo\s+est[aá]\s+bien|system\s+stability/.test(c))
     return { kind: "action", action: "stability", label: "System Stability" };
-
-  // Diagnostic
   if (/diagnostic|sweep|full[\s_-]*scan|diagn[oó]stico|haz\s+un\s+diagn/.test(c))
     return { kind: "action", action: "diagnostic", label: "Full Diagnostic" };
-
-  // Logs
   if (/\blogs?\b|tail|errores?\s+recientes|warnings?\s+recientes|mu[eé]strame\s+logs/.test(c))
     return { kind: "action", action: "logs", label: "System Logs" };
-
-  // Gateway
   if (/gateway/.test(c))
     return { kind: "action", action: "gateway-status", label: "Gateway Status" };
-
-  // Health
   if (/\bhealth\b|ping|alive|est[aá]\s+vivo|bridge\s+online|check\s+bridge|revisa\s+health/.test(c))
     return { kind: "action", action: "health", label: "Health Check" };
-
-  // System
   if (/\bsystem\b|cpu|ram|mem(ory)?|disk|recursos|estado\s+del\s+sistema/.test(c))
     return { kind: "action", action: "system", label: "System Status" };
-
-  // General status
   if (/\bstatus\b|state|report|estado/.test(c))
     return { kind: "action", action: "status", label: "General Status" };
 
   return { kind: "local", reply: HELP_REPLY };
 };
 
-// Best-effort parsing of "Status: <verdict>" from the agent reply.
 const parseVerdict = (text: string): Verdict | null => {
   const m = text.match(/^Status:\s*(OK|Warning|Critical|Blocked)\b/m);
   return m ? (m[1] as Verdict) : null;
 };
 
-const verdictBadgeClass = (v: Verdict): string => {
-  switch (v) {
-    case "OK":       return "border-green-neon/50 bg-green-neon/15 text-green-neon";
-    case "Warning":  return "border-yellow-400/50 bg-yellow-400/15 text-yellow-400";
-    case "Critical": return "border-destructive/60 bg-destructive/20 text-destructive";
-    case "Blocked":  return "border-orange-500/60 bg-orange-500/20 text-orange-400";
+// Map an action to follow-up suggestion commands.
+const SUGGESTION_MAP: Record<string, string[]> = {
+  health: ["system", "gateway", "stability"],
+  system: ["health", "logs", "alerts"],
+  "telegram-status": ["logs", "alerts", "health"],
+  logs: ["alerts", "diagnostic", "system"],
+  "gateway-status": ["health", "system", "stability"],
+  status: ["health", "system", "alerts"],
+  diagnostic: ["alerts", "stability", "logs"],
+  stability: ["alerts", "logs", "diagnostic"],
+  alerts: ["logs", "diagnostic", "stability"],
+};
+
+const getSuggestions = (action?: BridgeAction | null): string[] => {
+  if (!action) return [];
+  return SUGGESTION_MAP[action] ?? [];
+};
+
+// ---- Metrics extraction from edge-function `calls` payload ---------------
+
+const findEndpoint = (calls: any[], suffix: string) =>
+  calls.find((c) => typeof c?.endpoint === "string" && c.endpoint.includes(suffix));
+
+const toPct = (v: unknown): number | null => {
+  if (typeof v === "number" && Number.isFinite(v)) {
+    if (v <= 1) return v * 100;
+    return v;
   }
+  if (typeof v === "string") {
+    const n = parseFloat(v.replace("%", ""));
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+};
+
+const deepFind = (obj: any, keys: string[]): unknown => {
+  if (!obj || typeof obj !== "object") return undefined;
+  for (const k of Object.keys(obj)) {
+    if (keys.some((target) => k.toLowerCase() === target.toLowerCase())) return obj[k];
+  }
+  for (const v of Object.values(obj)) {
+    if (v && typeof v === "object") {
+      const found = deepFind(v, keys);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
+};
+
+const extractMetrics = (calls: any[]): Partial<SystemMetrics> => {
+  const out: Partial<SystemMetrics> = {};
+  if (!Array.isArray(calls) || calls.length === 0) return out;
+
+  const health = findEndpoint(calls, "/health");
+  const gw = findEndpoint(calls, "/gateway-status");
+  const sys = findEndpoint(calls, "/system");
+
+  if (health) out.bridgeOk = health.ok === true;
+  if (gw) out.gatewayOk = gw.ok === true;
+
+  if (sys?.body) {
+    const cpu = deepFind(sys.body, ["cpu", "cpu_percent", "cpuUsage", "cpu_usage"]);
+    const ram = deepFind(sys.body, ["ram", "memory", "mem", "memory_percent", "ram_percent"]);
+    const disk = deepFind(sys.body, ["disk", "disk_percent", "disk_usage"]);
+
+    // memory may itself be an object {percent: ...}
+    const cpuPct =
+      toPct(typeof cpu === "object" && cpu !== null ? deepFind(cpu, ["percent", "usage", "used"]) : cpu);
+    const ramPct =
+      toPct(typeof ram === "object" && ram !== null ? deepFind(ram, ["percent", "usage", "used"]) : ram);
+    const diskPct =
+      toPct(typeof disk === "object" && disk !== null ? deepFind(disk, ["percent", "usage", "used"]) : disk);
+
+    if (cpuPct !== null) out.cpu = cpuPct;
+    if (ramPct !== null) out.ram = ramPct;
+    if (diskPct !== null) out.disk = diskPct;
+  }
+
+  return out;
 };
 
 const Chat = () => {
@@ -129,6 +182,15 @@ const Chat = () => {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [metrics, setMetrics] = useState<SystemMetrics>({
+    bridgeOk: null,
+    gatewayOk: null,
+    cpu: null,
+    ram: null,
+    disk: null,
+    lastChecked: null,
+    raw: null,
+  });
 
   useEffect(() => {
     document.title = "OPENCLAW CONTROL // CHAT";
@@ -158,8 +220,6 @@ const Chat = () => {
     if (!user || !text.trim() || sending) return;
     const cmd = text.trim();
 
-    // If no explicit action (i.e. typed input), run it through the secure
-    // command guard. Free-form text is NEVER forwarded to the VPS.
     let resolvedAction: BridgeAction | undefined = action;
     let localReply: string | null = null;
     if (!action) {
@@ -174,7 +234,6 @@ const Chat = () => {
     setSending(true);
     setInput("");
 
-    // Optimistic operator message
     const tempId = crypto.randomUUID();
     const operatorMsg: Msg = {
       id: tempId,
@@ -185,7 +244,6 @@ const Chat = () => {
     setMessages((m) => [...m, operatorMsg]);
 
     try {
-      // Persist operator message
       await supabase.from("chat_messages").insert({
         user_id: user.id,
         role: "operator",
@@ -193,7 +251,6 @@ const Chat = () => {
         model_slug: activeModel?.slug ?? null,
       });
 
-      // Local rejection / not-implemented path → never call the bridge.
       if (localReply !== null) {
         await supabase.from("chat_messages").insert({
           user_id: user.id,
@@ -203,12 +260,18 @@ const Chat = () => {
         });
         setMessages((m) => [
           ...m,
-          { id: crypto.randomUUID(), role: "agent", content: localReply!, created_at: new Date().toISOString(), verdict: parseVerdict(localReply!) ?? "Blocked" },
+          {
+            id: crypto.randomUUID(),
+            role: "agent",
+            content: localReply!,
+            created_at: new Date().toISOString(),
+            verdict: parseVerdict(localReply!) ?? "Blocked",
+            suggestions: ["health", "system", "alerts"],
+          },
         ]);
         return;
       }
 
-      // Get enabled skills
       const { data: ops } = await supabase
         .from("operator_skills")
         .select("enabled, skills(slug)")
@@ -218,8 +281,6 @@ const Chat = () => {
         .map((o: any) => o.skills?.slug)
         .filter(Boolean) as string[];
 
-      // Invoke edge function. The bridge token is read server-side ONLY,
-      // from the OPENCLAW_BRIDGE_TOKEN secret. The frontend never handles it.
       const { data, error } = await supabase.functions.invoke("openclaw-agent", {
         body: { command: cmd, model: activeModel?.slug, skills, action: resolvedAction },
       });
@@ -227,6 +288,23 @@ const Chat = () => {
 
       const reply = (data?.reply as string) ?? "(no response)";
       const verdict = ((data?.verdict as Verdict | null) ?? parseVerdict(reply)) as Verdict | null;
+      const calls = (data?.calls as any[]) ?? [];
+      const usedAction = (data?.action as BridgeAction | null) ?? resolvedAction ?? null;
+
+      // Update status bar from any returned calls (only updates on commands).
+      const partial = extractMetrics(calls);
+      if (Object.keys(partial).length > 0 || calls.length > 0) {
+        setMetrics((prev) => ({
+          bridgeOk: partial.bridgeOk ?? prev.bridgeOk,
+          gatewayOk: partial.gatewayOk ?? prev.gatewayOk,
+          cpu: partial.cpu ?? prev.cpu,
+          ram: partial.ram ?? prev.ram,
+          disk: partial.disk ?? prev.disk,
+          lastChecked: new Date().toISOString(),
+          raw: calls.length > 0 ? calls : prev.raw,
+        }));
+      }
+
       await supabase.from("chat_messages").insert({
         user_id: user.id,
         role: "agent",
@@ -235,7 +313,15 @@ const Chat = () => {
       });
       setMessages((m) => [
         ...m,
-        { id: crypto.randomUUID(), role: "agent", content: reply, created_at: new Date().toISOString(), verdict },
+        {
+          id: crypto.randomUUID(),
+          role: "agent",
+          content: reply,
+          created_at: new Date().toISOString(),
+          verdict,
+          rawCalls: calls.length > 0 ? calls : undefined,
+          suggestions: getSuggestions(usedAction),
+        },
       ]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "TRANSMIT FAILED";
@@ -245,7 +331,6 @@ const Chat = () => {
     }
   };
 
-  // Quick actions map UI buttons → explicit bridge actions (no NL parsing).
   const quickActions: { label: string; icon: typeof Zap; cmd: string; action: BridgeAction }[] = [
     { label: "Full Diagnostic", icon: Zap,        cmd: "Run full diagnostic sweep.",     action: "diagnostic"     },
     { label: "Health Check",    icon: HeartPulse, cmd: "Bridge health check.",            action: "health"         },
@@ -256,11 +341,11 @@ const Chat = () => {
     { label: "General Status",  icon: Activity,   cmd: "Read general agent status.",      action: "status"         },
   ];
 
-  // Recent commands history (last 6 unique operator commands, newest first).
+  // Recent commands history (last 5 unique).
   const recentCommands = useMemo(() => {
     const seen = new Set<string>();
     const out: string[] = [];
-    for (let i = messages.length - 1; i >= 0 && out.length < 6; i--) {
+    for (let i = messages.length - 1; i >= 0 && out.length < 5; i--) {
       const m = messages[i];
       if (m.role !== "operator") continue;
       const c = m.content.trim();
@@ -286,6 +371,9 @@ const Chat = () => {
         </span>
       </div>
 
+      {/* Pinned status bar */}
+      <StatusBar metrics={metrics} />
+
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-thin">
         <div className="mx-auto max-w-3xl space-y-4 p-4">
@@ -297,59 +385,41 @@ const Chat = () => {
               </p>
             </div>
           )}
-          {messages.map((m) => (
-            <div
-              key={m.id}
-              className={cn("flex w-full gap-2 animate-fade-in-up", m.role === "operator" ? "justify-end" : "justify-start")}
-            >
-              {m.role === "agent" && (
-                <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-cyan/40 bg-cyan/10 text-cyan">
-                  <Bot className="h-4 w-4" />
+          {messages.map((m) => {
+            if (m.role === "operator") {
+              return (
+                <div key={m.id} className="flex w-full justify-end gap-2 animate-fade-in-up">
+                  <div className="max-w-[80%] space-y-1 text-right">
+                    <p className="font-mono text-[9px] uppercase tracking-widest text-cyan">
+                      OPERATOR_01
+                    </p>
+                    <div className="rounded-lg border border-cyan/40 bg-cyan/10 px-3 py-2 text-sm text-foreground glow-cyan-soft whitespace-pre-wrap break-words">
+                      {m.content}
+                    </div>
+                  </div>
+                  <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-surface-2 text-muted-foreground">
+                    <User className="h-4 w-4" />
+                  </div>
                 </div>
-              )}
-              <div className={cn("max-w-[80%] space-y-1", m.role === "operator" && "items-end text-right")}>
-                <div className={cn("flex items-center gap-1.5", m.role === "operator" && "justify-end")}>
-                  <p
-                    className={cn(
-                      "font-mono text-[9px] uppercase tracking-widest",
-                      m.role === "operator" ? "text-cyan" : "text-green-neon",
-                    )}
-                  >
-                    {m.role === "operator" ? "OPERATOR_01" : "OPENCLAW_AGENT_V2.4"}
-                  </p>
-                  {m.role === "agent" && m.verdict && (
-                    <span
-                      className={cn(
-                        "rounded border px-1.5 py-0 font-mono text-[9px] uppercase tracking-widest",
-                        verdictBadgeClass(m.verdict),
-                      )}
-                    >
-                      {m.verdict}
-                    </span>
-                  )}
-                </div>
-                <div
-                  className={cn(
-                    "rounded-lg border px-3 py-2 text-sm whitespace-pre-wrap break-words",
-                    m.role === "operator"
-                      ? "border-cyan/40 bg-cyan/10 text-foreground glow-cyan-soft"
-                      : "border-border bg-surface font-mono text-[13px]",
-                  )}
-                >
-                  {m.content}
-                </div>
+              );
+            }
+            return (
+              <div key={m.id} className="w-full animate-fade-in-up">
+                <AgentCard
+                  content={m.content}
+                  verdict={m.verdict ?? null}
+                  timestamp={m.created_at}
+                  rawCalls={m.rawCalls}
+                  suggestions={m.suggestions}
+                  onSuggestion={(s) => send(s)}
+                />
               </div>
-              {m.role === "operator" && (
-                <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-surface-2 text-muted-foreground">
-                  <User className="h-4 w-4" />
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
           {sending && (
             <div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan" />
-              OPENCLAW_AGENT_V2.4 :: PROCESSING...
+              OPENCLAW_AGENT_V2.5 :: PROCESSING...
             </div>
           )}
         </div>
