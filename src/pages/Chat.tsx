@@ -372,6 +372,26 @@ const Chat = () => {
               </button>
             ))}
           </div>
+          {recentCommands.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-thin">
+              <History className="h-3 w-3 shrink-0 text-muted-foreground" />
+              <span className="shrink-0 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
+                Recent ::
+              </span>
+              {recentCommands.map((c, i) => (
+                <button
+                  key={`${c}-${i}`}
+                  onClick={() => send(c)}
+                  disabled={sending}
+                  title={c}
+                  className="shrink-0 truncate rounded border border-border/60 bg-surface-2 px-2 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:border-cyan/40 hover:text-cyan disabled:opacity-50"
+                  style={{ maxWidth: "180px" }}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          )}
           <form
             onSubmit={(e) => {
               e.preventDefault();
