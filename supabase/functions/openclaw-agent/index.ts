@@ -26,7 +26,13 @@ type BridgeAction =
   | "diagnostic"
   | "telegram-status"
   | "stability"
-  | "alerts";
+  | "alerts"
+  | "uptime"
+  | "network"
+  | "ports"
+  | "containers"
+  | "memory"
+  | "disk";
 
 // ---- Forbidden / unsafe intents -----------------------------------------
 // Any command that matches these patterns is rejected locally and never
@@ -39,7 +45,10 @@ const FORBIDDEN_PATTERNS: RegExp[] = [
   /\bedit\s+(config|env|secret|token)\b/i,
   /\bset\s+(token|secret|password|env)\b/i,
   /\b(rotate|revoke)\s+(token|key|secret)\b/i,
-  /\bdocker\b/i, /\bkubectl\b/i, /\bsystemctl\b/i, /\bsudo\b/i,
+  // Block docker write/exec actions but allow read-only NL like "docker ps", "docker status", "running containers".
+  /\bdocker\s+(restart|stop|start|kill|rm|remove|exec|run|build|push|pull|compose|logs|cp|commit|tag|login|logout|system|prune|network|volume|swarm|service|stack|secret|config|container\s+(rm|stop|kill|exec|restart))\b/i,
+  /\bdocker[-_]?compose\b/i,
+  /\bkubectl\b/i, /\bsystemctl\b/i, /\bsudo\b/i,
   /\bshell\b/i, /\bbash\b/i, /\bsh\s+-c\b/i, /\bexec\b/i, /\bspawn\b/i,
   /\bcloudflare\b/i, /\bdns\b/i, /\bfirewall\b/i, /\biptables\b/i,
   /\bcat\s+\/?(etc|root|home|var)\b/i, /\bchmod\b/i, /\bchown\b/i,
@@ -52,13 +61,29 @@ const FORBIDDEN_PATTERNS: RegExp[] = [
 const isForbidden = (cmd: string): boolean =>
   FORBIDDEN_PATTERNS.some((re) => re.test(cmd));
 
-// Bridge endpoint map. All routes are GET.
-const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic" | "telegram-status">, string> = {
+// Bridge endpoint map. All routes are GET. Read-only diagnostics only.
+const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic" | "telegram-status" | "stability" | "alerts">, string> = {
   "health": "/api/openclaw/health",
   "system": "/api/openclaw/system",
   "gateway-status": "/api/openclaw/gateway-status",
   "status": "/api/openclaw/status",
   "logs": "/api/openclaw/logs?lines=50",
+  "uptime": "/api/openclaw/uptime",
+  "network": "/api/openclaw/network",
+  "ports": "/api/openclaw/ports",
+  "containers": "/api/openclaw/docker",
+  "memory": "/api/openclaw/memory",
+  "disk": "/api/openclaw/disk",
+};
+
+// Human label per action (used in "Endpoint not available yet" messages).
+const ACTION_LABEL: Partial<Record<BridgeAction, string>> = {
+  uptime: "Uptime",
+  network: "Network",
+  ports: "Ports",
+  containers: "Containers",
+  memory: "Memory",
+  disk: "Disk",
 };
 
 // Interpret a free-text command into a known bridge action.
@@ -93,8 +118,32 @@ const interpretCommand = (cmd: string): BridgeAction | null => {
   if (/\bhealth\b|ping|alive|est[aá]\s+vivo|bridge\s+online|check\s+bridge|revisa\s+health/.test(c))
     return "health";
 
+  // Uptime
+  if (/\buptime\b|how\s+long|system\s+running|tiempo\s+activo|cu[aá]ndo\s+inici[oó]|cuando\s+inicio/.test(c))
+    return "uptime";
+
+  // Network
+  if (/\bnetwork\b|interfaces?|estado\s+de\s+red|conexi[oó]n|ip\s+address|connectivity/.test(c))
+    return "network";
+
+  // Ports
+  if (/\bports?\b|listening\s+ports|open\s+ports|puertos(\s+abiertos)?/.test(c))
+    return "ports";
+
+  // Containers (read-only docker ps style)
+  if (/\bcontainers?\b|docker\s+ps|docker\s+status|running\s+containers|contenedores(\s+activos)?/.test(c))
+    return "containers";
+
+  // Memory detail
+  if (/\bmemory\b|memoria|memory\s+usage|ram\s+detalle|uso\s+de\s+memoria/.test(c))
+    return "memory";
+
+  // Disk detail
+  if (/\bdisk\b|disco|disk\s+usage|almacenamiento|espacio\s+en\s+disco|partition/.test(c))
+    return "disk";
+
   // System resources
-  if (/\bsystem\b|uname|host|cpu|ram|mem(ory)?|disk|recursos|estado\s+del\s+sistema/.test(c))
+  if (/\bsystem\b|uname|host|cpu|ram|mem(ory)?|recursos|estado\s+del\s+sistema/.test(c))
     return "system";
 
   // General status
@@ -423,6 +472,87 @@ const naturalize = (
     if (hasWarn) return { status: "Warning", summary: "Hay warnings recientes en los logs, pero no errores críticos.", nextStep: "Revisa System Logs → Warnings." };
     return { status: "OK", summary: "No hay errores ni warnings notables en los logs recientes.", nextStep: "" };
   }
+
+  // ---- New extended read-only diagnostics --------------------------------
+  // For these, if the bridge returns 404 / 501 / "not implemented" we surface
+  // a clean "Endpoint not available yet" message instead of a raw failure.
+  const NEW_ACTIONS: BridgeAction[] = ["uptime", "network", "ports", "containers", "memory", "disk"];
+  if (NEW_ACTIONS.includes(action)) {
+    const label = ACTION_LABEL[action] ?? action;
+    const bodyText = typeof r.body === "string" ? r.body : (() => {
+      try { return JSON.stringify(r.body ?? ""); } catch { return ""; }
+    })();
+    const notImplemented =
+      r.status === 404 || r.status === 501 ||
+      /not\s+implemented|unknown\s+route|cannot\s+(get|find)|no\s+route|route\s+not\s+found/i.test(bodyText);
+
+    if (notImplemented) {
+      return {
+        status: "Warning",
+        summary: `${label} endpoint not available yet on the bridge.`,
+        nextStep: `Re-ejecuta '${action}' cuando el bridge exponga ${BRIDGE_ROUTES[action as keyof typeof BRIDGE_ROUTES]}.`,
+      };
+    }
+    if (!ok) {
+      return {
+        status: "Warning",
+        summary: `${label} no respondió limpio (HTTP ${r.status}).`,
+        nextStep: "Re-ejecuta el comando o revisa el bridge.",
+      };
+    }
+    // Action-specific friendly summaries.
+    if (action === "uptime") {
+      const up = deepFind(r.body, [/^uptime$/i, /^uptime[_-]?(seconds|s|h|hours|pretty|human)$/i, /^since$/i, /^boot[_-]?time$/i]);
+      return {
+        status: "OK",
+        summary: up !== undefined ? `System uptime: ${fmt(up)}.` : "Uptime endpoint respondió correctamente.",
+        nextStep: "",
+      };
+    }
+    if (action === "network") {
+      const ip = deepFind(r.body, [/^ip([_-]?address)?$/i, /^public[_-]?ip$/i, /^primary[_-]?ip$/i]);
+      const reachable = deepFind(r.body, [/^reachable$/i, /^online$/i, /^connected$/i]);
+      const parts: string[] = ["Network endpoint OK"];
+      if (ip !== undefined) parts.push(`IP ${fmt(ip)}`);
+      if (reachable !== undefined) parts.push(`reachable=${fmt(reachable)}`);
+      return { status: "OK", summary: parts.join(" · ") + ".", nextStep: "" };
+    }
+    if (action === "ports") {
+      const list = deepFind(r.body, [/^ports$/i, /^listening$/i, /^open[_-]?ports$/i]);
+      const count = Array.isArray(list) ? list.length : undefined;
+      return {
+        status: "OK",
+        summary: count !== undefined
+          ? `${count} listening port${count === 1 ? "" : "s"} detected.`
+          : "Ports endpoint respondió correctamente.",
+        nextStep: "",
+      };
+    }
+    if (action === "containers") {
+      const list = deepFind(r.body, [/^containers$/i, /^running$/i, /^docker$/i]);
+      const count = Array.isArray(list) ? list.length : undefined;
+      return {
+        status: "OK",
+        summary: count !== undefined
+          ? `${count} running container${count === 1 ? "" : "s"} (read-only view).`
+          : "Containers endpoint respondió correctamente (read-only).",
+        nextStep: "",
+      };
+    }
+    if (action === "memory") {
+      const ramPct = findRamPercent(r.body);
+      if (ramPct !== null && ramPct >= 90) return { status: "Critical", summary: `Memoria crítica (${Math.round(ramPct)}%).`, nextStep: "Investiga procesos pesados." };
+      if (ramPct !== null && ramPct >= 75) return { status: "Warning", summary: `Memoria elevada (${Math.round(ramPct)}%).`, nextStep: "Vigila la carga." };
+      return { status: "OK", summary: ramPct !== null ? `Memoria normal (${Math.round(ramPct)}%).` : "Memory endpoint respondió correctamente.", nextStep: "" };
+    }
+    if (action === "disk") {
+      const diskPct = findNum(r.body, /^(disk|storage)([_-]?(pct|percent|usage))?$/i);
+      if (diskPct !== null && diskPct >= 90) return { status: "Critical", summary: `Disco crítico (${Math.round(diskPct)}%).`, nextStep: "Libera espacio de inmediato." };
+      if (diskPct !== null && diskPct >= 75) return { status: "Warning", summary: `Disco elevado (${Math.round(diskPct)}%).`, nextStep: "Planifica limpieza de espacio." };
+      return { status: "OK", summary: diskPct !== null ? `Disco normal (${Math.round(diskPct)}%).` : "Disk endpoint respondió correctamente.", nextStep: "" };
+    }
+  }
+
   // Fallback (shouldn't be reached for the explicit actions above).
   return { status: ok ? "OK" : "Warning", summary: ok ? "Acción completada." : "La acción no respondió limpio.", nextStep: "" };
 };

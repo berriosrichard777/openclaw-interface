@@ -29,7 +29,13 @@ type BridgeAction =
   | "status"
   | "telegram-status"
   | "stability"
-  | "alerts";
+  | "alerts"
+  | "uptime"
+  | "network"
+  | "ports"
+  | "containers"
+  | "memory"
+  | "disk";
 
 const FORBIDDEN_PATTERNS: RegExp[] = [
   /\bdelete\b/i, /\bremove\b/i, /\brm\s+-/i, /\bdrop\b/i, /\bpurge\b/i,
@@ -37,7 +43,9 @@ const FORBIDDEN_PATTERNS: RegExp[] = [
   /\brestart\b/i, /\breboot\b/i, /\bshutdown\b/i, /\bkill\b/i,
   /\bchange\s+(token|secret|password|config)\b/i,
   /\bedit\s+(config|env|secret|token)\b/i,
-  /\bdocker\b/i, /\bkubectl\b/i, /\bsystemctl\b/i, /\bsudo\b/i,
+  /\bdocker\s+(restart|stop|start|kill|rm|remove|exec|run|build|push|pull|compose|logs|cp|commit|tag|login|logout|system|prune|network|volume|swarm|service|stack|secret|config)\b/i,
+  /\bdocker[-_]?compose\b/i,
+  /\bkubectl\b/i, /\bsystemctl\b/i, /\bsudo\b/i,
   /\bshell\b/i, /\bbash\b/i, /\bsh\s+-c\b/i,
   /\bcloudflare\b/i, /\bdns\b/i, /\bfirewall\b/i,
   /\b(show|expose|reveal|print|leak|dump)\s+(the\s+)?(token|secret|password|api[_-]?key|env|credential)/i,
@@ -81,7 +89,19 @@ const resolveCommand = (raw: string): ResolvedCommand => {
     return { kind: "action", action: "gateway-status", label: "Gateway Status" };
   if (/\bhealth\b|ping|alive|est[aá]\s+vivo|bridge\s+online|check\s+bridge|revisa\s+health/.test(c))
     return { kind: "action", action: "health", label: "Health Check" };
-  if (/\bsystem\b|cpu|ram|mem(ory)?|disk|recursos|estado\s+del\s+sistema/.test(c))
+  if (/\buptime\b|how\s+long|system\s+running|tiempo\s+activo|cu[aá]ndo\s+inici[oó]|cuando\s+inicio/.test(c))
+    return { kind: "action", action: "uptime", label: "Uptime" };
+  if (/\bnetwork\b|interfaces?|estado\s+de\s+red|conexi[oó]n|ip\s+address|connectivity/.test(c))
+    return { kind: "action", action: "network", label: "Network" };
+  if (/\bports?\b|listening\s+ports|open\s+ports|puertos(\s+abiertos)?/.test(c))
+    return { kind: "action", action: "ports", label: "Ports" };
+  if (/\bcontainers?\b|docker\s+ps|docker\s+status|running\s+containers|contenedores(\s+activos)?/.test(c))
+    return { kind: "action", action: "containers", label: "Containers" };
+  if (/\bmemory\b|memoria|memory\s+usage|ram\s+detalle|uso\s+de\s+memoria/.test(c))
+    return { kind: "action", action: "memory", label: "Memory" };
+  if (/\bdisk\b|disco|disk\s+usage|almacenamiento|espacio\s+en\s+disco/.test(c))
+    return { kind: "action", action: "disk", label: "Disk" };
+  if (/\bsystem\b|cpu|ram|mem(ory)?|recursos|estado\s+del\s+sistema/.test(c))
     return { kind: "action", action: "system", label: "System Status" };
   if (/\bstatus\b|state|report|estado/.test(c))
     return { kind: "action", action: "status", label: "General Status" };
@@ -97,7 +117,7 @@ const parseVerdict = (text: string): Verdict | null => {
 // Map an action to follow-up suggestion commands.
 const SUGGESTION_MAP: Record<string, string[]> = {
   health: ["system", "gateway", "stability"],
-  system: ["health", "logs", "alerts"],
+  system: ["memory", "disk", "uptime"],
   "telegram-status": ["logs", "alerts", "health"],
   logs: ["alerts", "diagnostic", "system"],
   "gateway-status": ["health", "system", "stability"],
@@ -105,6 +125,12 @@ const SUGGESTION_MAP: Record<string, string[]> = {
   diagnostic: ["alerts", "stability", "logs"],
   stability: ["alerts", "logs", "diagnostic"],
   alerts: ["logs", "diagnostic", "stability"],
+  uptime: ["system", "network", "containers"],
+  network: ["ports", "system", "health"],
+  ports: ["network", "containers", "system"],
+  containers: ["ports", "memory", "system"],
+  memory: ["system", "disk", "uptime"],
+  disk: ["system", "memory", "uptime"],
 };
 
 const getSuggestions = (action?: BridgeAction | null): string[] => {
