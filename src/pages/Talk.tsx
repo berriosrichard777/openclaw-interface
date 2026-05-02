@@ -21,7 +21,7 @@ const WELCOME: Msg = {
   id: "welcome",
   role: "assistant",
   content:
-    "Hola, soy **RichOps**. Aquí podemos conversar libremente — explico estados, te oriento en la consola y respondo preguntas. Para diagnósticos reales del sistema usa **Command Chat**.",
+    "Hola, soy **RichOps**. Pregúntame por el estado de OpenClaw — health, system, gateway, telegram, logs, alerts, stability, uptime, ports, containers, memory, disk — y consulto el bridge en vivo. Acciones destructivas siguen bloqueadas.",
   created_at: new Date().toISOString(),
 };
 
@@ -224,7 +224,7 @@ const Talk = () => {
           </Button>
         </div>
         <p className="mx-auto mt-2 max-w-2xl text-center font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
-          Conversación. Para diagnósticos reales · Command Chat
+          Read-only · Bridge live context · Destructive actions blocked
         </p>
       </div>
     </div>
