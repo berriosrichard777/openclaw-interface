@@ -472,6 +472,87 @@ const naturalize = (
     if (hasWarn) return { status: "Warning", summary: "Hay warnings recientes en los logs, pero no errores críticos.", nextStep: "Revisa System Logs → Warnings." };
     return { status: "OK", summary: "No hay errores ni warnings notables en los logs recientes.", nextStep: "" };
   }
+
+  // ---- New extended read-only diagnostics --------------------------------
+  // For these, if the bridge returns 404 / 501 / "not implemented" we surface
+  // a clean "Endpoint not available yet" message instead of a raw failure.
+  const NEW_ACTIONS: BridgeAction[] = ["uptime", "network", "ports", "containers", "memory", "disk"];
+  if (NEW_ACTIONS.includes(action)) {
+    const label = ACTION_LABEL[action] ?? action;
+    const bodyText = typeof r.body === "string" ? r.body : (() => {
+      try { return JSON.stringify(r.body ?? ""); } catch { return ""; }
+    })();
+    const notImplemented =
+      r.status === 404 || r.status === 501 ||
+      /not\s+implemented|unknown\s+route|cannot\s+(get|find)|no\s+route|route\s+not\s+found/i.test(bodyText);
+
+    if (notImplemented) {
+      return {
+        status: "Warning",
+        summary: `${label} endpoint not available yet on the bridge.`,
+        nextStep: `Re-ejecuta '${action}' cuando el bridge exponga ${BRIDGE_ROUTES[action as keyof typeof BRIDGE_ROUTES]}.`,
+      };
+    }
+    if (!ok) {
+      return {
+        status: "Warning",
+        summary: `${label} no respondió limpio (HTTP ${r.status}).`,
+        nextStep: "Re-ejecuta el comando o revisa el bridge.",
+      };
+    }
+    // Action-specific friendly summaries.
+    if (action === "uptime") {
+      const up = deepFind(r.body, [/^uptime$/i, /^uptime[_-]?(seconds|s|h|hours|pretty|human)$/i, /^since$/i, /^boot[_-]?time$/i]);
+      return {
+        status: "OK",
+        summary: up !== undefined ? `System uptime: ${fmt(up)}.` : "Uptime endpoint respondió correctamente.",
+        nextStep: "",
+      };
+    }
+    if (action === "network") {
+      const ip = deepFind(r.body, [/^ip([_-]?address)?$/i, /^public[_-]?ip$/i, /^primary[_-]?ip$/i]);
+      const reachable = deepFind(r.body, [/^reachable$/i, /^online$/i, /^connected$/i]);
+      const parts: string[] = ["Network endpoint OK"];
+      if (ip !== undefined) parts.push(`IP ${fmt(ip)}`);
+      if (reachable !== undefined) parts.push(`reachable=${fmt(reachable)}`);
+      return { status: "OK", summary: parts.join(" · ") + ".", nextStep: "" };
+    }
+    if (action === "ports") {
+      const list = deepFind(r.body, [/^ports$/i, /^listening$/i, /^open[_-]?ports$/i]);
+      const count = Array.isArray(list) ? list.length : undefined;
+      return {
+        status: "OK",
+        summary: count !== undefined
+          ? `${count} listening port${count === 1 ? "" : "s"} detected.`
+          : "Ports endpoint respondió correctamente.",
+        nextStep: "",
+      };
+    }
+    if (action === "containers") {
+      const list = deepFind(r.body, [/^containers$/i, /^running$/i, /^docker$/i]);
+      const count = Array.isArray(list) ? list.length : undefined;
+      return {
+        status: "OK",
+        summary: count !== undefined
+          ? `${count} running container${count === 1 ? "" : "s"} (read-only view).`
+          : "Containers endpoint respondió correctamente (read-only).",
+        nextStep: "",
+      };
+    }
+    if (action === "memory") {
+      const ramPct = findRamPercent(r.body);
+      if (ramPct !== null && ramPct >= 90) return { status: "Critical", summary: `Memoria crítica (${Math.round(ramPct)}%).`, nextStep: "Investiga procesos pesados." };
+      if (ramPct !== null && ramPct >= 75) return { status: "Warning", summary: `Memoria elevada (${Math.round(ramPct)}%).`, nextStep: "Vigila la carga." };
+      return { status: "OK", summary: ramPct !== null ? `Memoria normal (${Math.round(ramPct)}%).` : "Memory endpoint respondió correctamente.", nextStep: "" };
+    }
+    if (action === "disk") {
+      const diskPct = findNum(r.body, /^(disk|storage)([_-]?(pct|percent|usage))?$/i);
+      if (diskPct !== null && diskPct >= 90) return { status: "Critical", summary: `Disco crítico (${Math.round(diskPct)}%).`, nextStep: "Libera espacio de inmediato." };
+      if (diskPct !== null && diskPct >= 75) return { status: "Warning", summary: `Disco elevado (${Math.round(diskPct)}%).`, nextStep: "Planifica limpieza de espacio." };
+      return { status: "OK", summary: diskPct !== null ? `Disco normal (${Math.round(diskPct)}%).` : "Disk endpoint respondió correctamente.", nextStep: "" };
+    }
+  }
+
   // Fallback (shouldn't be reached for the explicit actions above).
   return { status: ok ? "OK" : "Warning", summary: ok ? "Acción completada." : "La acción no respondió limpio.", nextStep: "" };
 };
