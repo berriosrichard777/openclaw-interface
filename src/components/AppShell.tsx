@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { Menu, LayoutDashboard, Cpu, MessageSquare, Wand2, Activity, LogOut, Power, Settings } from "lucide-react";
+import { Menu, LayoutDashboard, Cpu, MessageSquare, MessagesSquare, Wand2, Activity, LogOut, Power, Settings } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { useOperator } from "@/hooks/useOperator";
@@ -12,8 +12,9 @@ import { useBridgeStatus } from "@/hooks/useBridgeStatus";
 
 const tabs = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/talk", label: "Chat", icon: MessageSquare },
+  { to: "/chat", label: "Command", icon: MessagesSquare },
   { to: "/models", label: "Models", icon: Cpu },
-  { to: "/chat", label: "Chat", icon: MessageSquare },
   { to: "/skills", label: "Skills", icon: Wand2 },
   { to: "/activity", label: "Activity", icon: Activity },
 ];
