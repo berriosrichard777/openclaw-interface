@@ -26,7 +26,13 @@ type BridgeAction =
   | "diagnostic"
   | "telegram-status"
   | "stability"
-  | "alerts";
+  | "alerts"
+  | "uptime"
+  | "network"
+  | "ports"
+  | "containers"
+  | "memory"
+  | "disk";
 
 // ---- Forbidden / unsafe intents -----------------------------------------
 // Any command that matches these patterns is rejected locally and never
