@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Send, Zap, Bot, User, HeartPulse, Cpu, Radio, Activity, Bell, FileText, History } from "lucide-react";
+import { Send, Zap, Bot, User, HeartPulse, Cpu, Radio, Activity, Bell, FileText, History, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -191,6 +191,8 @@ const Chat = () => {
     lastChecked: null,
     raw: null,
   });
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [logsLastChecked, setLogsLastChecked] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = "OPENCLAW CONTROL // CHAT";
@@ -219,6 +221,10 @@ const Chat = () => {
   const send = async (text: string, action?: BridgeAction) => {
     if (!user || !text.trim() || sending) return;
     const cmd = text.trim();
+    if (action === "logs") {
+      setLogsOpen(true);
+      setLogsLastChecked(new Date().toISOString());
+    }
 
     let resolvedAction: BridgeAction | undefined = action;
     let localReply: string | null = null;
@@ -428,7 +434,34 @@ const Chat = () => {
       {/* Quick actions + command bar */}
       <div className="border-t border-border bg-surface/80 backdrop-blur">
         <div className="mx-auto max-w-3xl space-y-2 p-3">
-          <SystemLogsPanel />
+          <div className="rounded border border-border/60 bg-surface-2/50">
+            <button
+              type="button"
+              onClick={() => {
+                setLogsOpen((v) => {
+                  if (!v) setLogsLastChecked(new Date().toISOString());
+                  return !v;
+                });
+              }}
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground hover:text-cyan"
+            >
+              <FileText className="h-3 w-3" />
+              <span>System Logs</span>
+              <span className="text-muted-foreground/60">·</span>
+              <span className="text-muted-foreground/80">
+                {logsLastChecked ? new Date(logsLastChecked).toLocaleTimeString() : "—"}
+              </span>
+              <span className="ml-auto flex items-center gap-1 text-cyan/80">
+                {logsOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                {logsOpen ? "Hide" : "Show"}
+              </span>
+            </button>
+            {logsOpen && (
+              <div className="border-t border-border/60 p-2">
+                <SystemLogsPanel />
+              </div>
+            )}
+          </div>
           <div className="flex flex-wrap gap-2">
             {quickActions.map((q) => (
               <button
