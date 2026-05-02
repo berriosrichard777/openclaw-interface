@@ -107,6 +107,21 @@ const resolveCommand = (raw: string): ResolvedCommand => {
   return { kind: "local", reply: HELP_REPLY };
 };
 
+// Best-effort parsing of "Status: <verdict>" from the agent reply.
+const parseVerdict = (text: string): Verdict | null => {
+  const m = text.match(/^Status:\s*(OK|Warning|Critical|Blocked)\b/m);
+  return m ? (m[1] as Verdict) : null;
+};
+
+const verdictBadgeClass = (v: Verdict): string => {
+  switch (v) {
+    case "OK":       return "border-green-neon/50 bg-green-neon/15 text-green-neon";
+    case "Warning":  return "border-yellow-400/50 bg-yellow-400/15 text-yellow-400";
+    case "Critical": return "border-destructive/60 bg-destructive/20 text-destructive";
+    case "Blocked":  return "border-orange-500/60 bg-orange-500/20 text-orange-400";
+  }
+};
+
 const Chat = () => {
   const { user } = useAuth();
   const { activeModel } = useOperator();
