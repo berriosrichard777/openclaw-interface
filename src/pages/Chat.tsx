@@ -29,7 +29,13 @@ type BridgeAction =
   | "status"
   | "telegram-status"
   | "stability"
-  | "alerts";
+  | "alerts"
+  | "uptime"
+  | "network"
+  | "ports"
+  | "containers"
+  | "memory"
+  | "disk";
 
 const FORBIDDEN_PATTERNS: RegExp[] = [
   /\bdelete\b/i, /\bremove\b/i, /\brm\s+-/i, /\bdrop\b/i, /\bpurge\b/i,
