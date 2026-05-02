@@ -251,8 +251,25 @@ const Chat = () => {
     { label: "Health Check",    icon: HeartPulse, cmd: "Bridge health check.",            action: "health"         },
     { label: "System Status",   icon: Cpu,        cmd: "Read system snapshot.",           action: "system"         },
     { label: "Gateway Status",  icon: Radio,      cmd: "Read gateway link status.",       action: "gateway-status" },
+    { label: "Logs",            icon: FileText,   cmd: "Show recent system logs.",        action: "logs"           },
+    { label: "Alerts",          icon: Bell,       cmd: "Show active alerts.",             action: "alerts"         },
     { label: "General Status",  icon: Activity,   cmd: "Read general agent status.",      action: "status"         },
   ];
+
+  // Recent commands history (last 6 unique operator commands, newest first).
+  const recentCommands = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (let i = messages.length - 1; i >= 0 && out.length < 6; i--) {
+      const m = messages[i];
+      if (m.role !== "operator") continue;
+      const c = m.content.trim();
+      if (!c || seen.has(c.toLowerCase())) continue;
+      seen.add(c.toLowerCase());
+      out.push(c);
+    }
+    return out;
+  }, [messages]);
 
   return (
     <div className="flex h-[calc(100vh-3.5rem-5rem)] flex-col">
