@@ -9,6 +9,7 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Models from "./pages/Models";
 import Chat from "./pages/Chat";
+import Talk from "./pages/Talk";
 import Skills from "./pages/Skills";
 import Activity from "./pages/Activity";
 import NotFound from "./pages/NotFound.tsx";
@@ -32,6 +33,7 @@ const App = () => (
           >
             <Route path="/" element={<Dashboard />} />
             <Route path="/models" element={<Models />} />
+            <Route path="/talk" element={<Talk />} />
             <Route path="/chat" element={<Chat />} />
             <Route path="/skills" element={<Skills />} />
             <Route path="/activity" element={<Activity />} />
