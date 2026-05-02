@@ -638,8 +638,8 @@ Deno.serve(async (req) => {
     // no client-supplied token, no LocalStorage path. Never logged or echoed.
     const bridgeToken = Deno.env.get("OPENCLAW_BRIDGE_TOKEN");
 
-    // Base URL: prefer OPENCLAW_BRIDGE_URL secret, fall back to legacy default.
-    const VPS_BASE = (Deno.env.get("OPENCLAW_BRIDGE_URL") ?? "https://ai.richops.cloud")
+    // Base URL: prefer OPENCLAW_BRIDGE_URL secret, fall back to current bridge.
+    const VPS_BASE = (Deno.env.get("OPENCLAW_BRIDGE_URL") ?? "https://bridge.richops.cloud")
       .replace(/\/+$/, "");
 
     if (!bridgeToken) {
@@ -751,10 +751,15 @@ Deno.serve(async (req) => {
         (calls.length ? ` :: ${calls.map((c) => c.status).join("/")}` : ""),
     });
 
+    // Extract verdict from the conversational reply for the UI badge.
+    const verdictMatch = reply.match(/^Status:\s*(OK|Warning|Critical|Blocked)/m);
+    const verdict = verdictMatch ? verdictMatch[1] : null;
+
     return new Response(
       JSON.stringify({
         reply,
         action,
+        verdict,
         model: body.model,
         agent: "OPENCLAW_AGENT_V2.5",
         calls: calls.map((c) => ({

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Send, Zap, Bot, User, HeartPulse, Cpu, Radio, Activity } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Send, Zap, Bot, User, HeartPulse, Cpu, Radio, Activity, Bell, FileText, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -8,7 +8,8 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import SystemLogsPanel from "@/components/SystemLogsPanel";
 
-type Msg = { id: string; role: "operator" | "agent"; content: string; created_at: string };
+type Verdict = "OK" | "Warning" | "Critical" | "Blocked";
+type Msg = { id: string; role: "operator" | "agent"; content: string; created_at: string; verdict?: Verdict | null };
 
 type BridgeAction =
   | "logs"
@@ -106,6 +107,21 @@ const resolveCommand = (raw: string): ResolvedCommand => {
   return { kind: "local", reply: HELP_REPLY };
 };
 
+// Best-effort parsing of "Status: <verdict>" from the agent reply.
+const parseVerdict = (text: string): Verdict | null => {
+  const m = text.match(/^Status:\s*(OK|Warning|Critical|Blocked)\b/m);
+  return m ? (m[1] as Verdict) : null;
+};
+
+const verdictBadgeClass = (v: Verdict): string => {
+  switch (v) {
+    case "OK":       return "border-green-neon/50 bg-green-neon/15 text-green-neon";
+    case "Warning":  return "border-yellow-400/50 bg-yellow-400/15 text-yellow-400";
+    case "Critical": return "border-destructive/60 bg-destructive/20 text-destructive";
+    case "Blocked":  return "border-orange-500/60 bg-orange-500/20 text-orange-400";
+  }
+};
+
 const Chat = () => {
   const { user } = useAuth();
   const { activeModel } = useOperator();
@@ -123,7 +139,15 @@ const Chat = () => {
       .eq("user_id", user.id)
       .order("created_at", { ascending: true })
       .limit(200)
-      .then(({ data }) => setMessages((data as Msg[]) ?? []));
+      .then(({ data }) => {
+        const rows = (data ?? []) as Msg[];
+        setMessages(
+          rows.map((r) => ({
+            ...r,
+            verdict: r.role === "agent" ? parseVerdict(r.content) : null,
+          })),
+        );
+      });
   }, [user]);
 
   useEffect(() => {
@@ -179,7 +203,7 @@ const Chat = () => {
         });
         setMessages((m) => [
           ...m,
-          { id: crypto.randomUUID(), role: "agent", content: localReply!, created_at: new Date().toISOString() },
+          { id: crypto.randomUUID(), role: "agent", content: localReply!, created_at: new Date().toISOString(), verdict: parseVerdict(localReply!) ?? "Blocked" },
         ]);
         return;
       }
@@ -202,6 +226,7 @@ const Chat = () => {
       if (error) throw error;
 
       const reply = (data?.reply as string) ?? "(no response)";
+      const verdict = ((data?.verdict as Verdict | null) ?? parseVerdict(reply)) as Verdict | null;
       await supabase.from("chat_messages").insert({
         user_id: user.id,
         role: "agent",
@@ -210,7 +235,7 @@ const Chat = () => {
       });
       setMessages((m) => [
         ...m,
-        { id: crypto.randomUUID(), role: "agent", content: reply, created_at: new Date().toISOString() },
+        { id: crypto.randomUUID(), role: "agent", content: reply, created_at: new Date().toISOString(), verdict },
       ]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "TRANSMIT FAILED";
@@ -226,8 +251,25 @@ const Chat = () => {
     { label: "Health Check",    icon: HeartPulse, cmd: "Bridge health check.",            action: "health"         },
     { label: "System Status",   icon: Cpu,        cmd: "Read system snapshot.",           action: "system"         },
     { label: "Gateway Status",  icon: Radio,      cmd: "Read gateway link status.",       action: "gateway-status" },
+    { label: "Logs",            icon: FileText,   cmd: "Show recent system logs.",        action: "logs"           },
+    { label: "Alerts",          icon: Bell,       cmd: "Show active alerts.",             action: "alerts"         },
     { label: "General Status",  icon: Activity,   cmd: "Read general agent status.",      action: "status"         },
   ];
+
+  // Recent commands history (last 6 unique operator commands, newest first).
+  const recentCommands = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (let i = messages.length - 1; i >= 0 && out.length < 6; i--) {
+      const m = messages[i];
+      if (m.role !== "operator") continue;
+      const c = m.content.trim();
+      if (!c || seen.has(c.toLowerCase())) continue;
+      seen.add(c.toLowerCase());
+      out.push(c);
+    }
+    return out;
+  }, [messages]);
 
   return (
     <div className="flex h-[calc(100vh-3.5rem-5rem)] flex-col">
@@ -266,14 +308,26 @@ const Chat = () => {
                 </div>
               )}
               <div className={cn("max-w-[80%] space-y-1", m.role === "operator" && "items-end text-right")}>
-                <p
-                  className={cn(
-                    "font-mono text-[9px] uppercase tracking-widest",
-                    m.role === "operator" ? "text-cyan" : "text-green-neon",
+                <div className={cn("flex items-center gap-1.5", m.role === "operator" && "justify-end")}>
+                  <p
+                    className={cn(
+                      "font-mono text-[9px] uppercase tracking-widest",
+                      m.role === "operator" ? "text-cyan" : "text-green-neon",
+                    )}
+                  >
+                    {m.role === "operator" ? "OPERATOR_01" : "OPENCLAW_AGENT_V2.4"}
+                  </p>
+                  {m.role === "agent" && m.verdict && (
+                    <span
+                      className={cn(
+                        "rounded border px-1.5 py-0 font-mono text-[9px] uppercase tracking-widest",
+                        verdictBadgeClass(m.verdict),
+                      )}
+                    >
+                      {m.verdict}
+                    </span>
                   )}
-                >
-                  {m.role === "operator" ? "OPERATOR_01" : "OPENCLAW_AGENT_V2.4"}
-                </p>
+                </div>
                 <div
                   className={cn(
                     "rounded-lg border px-3 py-2 text-sm whitespace-pre-wrap break-words",
@@ -318,6 +372,26 @@ const Chat = () => {
               </button>
             ))}
           </div>
+          {recentCommands.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-thin">
+              <History className="h-3 w-3 shrink-0 text-muted-foreground" />
+              <span className="shrink-0 font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
+                Recent ::
+              </span>
+              {recentCommands.map((c, i) => (
+                <button
+                  key={`${c}-${i}`}
+                  onClick={() => send(c)}
+                  disabled={sending}
+                  title={c}
+                  className="shrink-0 truncate rounded border border-border/60 bg-surface-2 px-2 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:border-cyan/40 hover:text-cyan disabled:opacity-50"
+                  style={{ maxWidth: "180px" }}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          )}
           <form
             onSubmit={(e) => {
               e.preventDefault();
