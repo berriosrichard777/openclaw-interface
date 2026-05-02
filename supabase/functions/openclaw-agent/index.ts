@@ -70,6 +70,31 @@ const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic" | "telegram-statu
   "logs": "/api/openclaw/logs?lines=50",
 };
 
+// Bridge endpoint map. All routes are GET. Read-only diagnostics only.
+const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic" | "telegram-status" | "stability" | "alerts">, string> = {
+  "health": "/api/openclaw/health",
+  "system": "/api/openclaw/system",
+  "gateway-status": "/api/openclaw/gateway-status",
+  "status": "/api/openclaw/status",
+  "logs": "/api/openclaw/logs?lines=50",
+  "uptime": "/api/openclaw/uptime",
+  "network": "/api/openclaw/network",
+  "ports": "/api/openclaw/ports",
+  "containers": "/api/openclaw/docker",
+  "memory": "/api/openclaw/memory",
+  "disk": "/api/openclaw/disk",
+};
+
+// Human label per action (used in "Endpoint not available yet" messages).
+const ACTION_LABEL: Partial<Record<BridgeAction, string>> = {
+  uptime: "Uptime",
+  network: "Network",
+  ports: "Ports",
+  containers: "Containers",
+  memory: "Memory",
+  disk: "Disk",
+};
+
 // Interpret a free-text command into a known bridge action.
 // Supports English + Spanish natural phrases. Returns null if no safe match.
 const interpretCommand = (cmd: string): BridgeAction | null => {
