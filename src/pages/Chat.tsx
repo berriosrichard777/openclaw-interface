@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Send, Zap, Bot, User, HeartPulse, Cpu, Radio, Activity, Bell, FileText, History } from "lucide-react";
+import { Send, Zap, Bot, User, HeartPulse, Cpu, Radio, Activity, Bell, FileText, History, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
