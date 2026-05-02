@@ -139,7 +139,15 @@ const Chat = () => {
       .eq("user_id", user.id)
       .order("created_at", { ascending: true })
       .limit(200)
-      .then(({ data }) => setMessages((data as Msg[]) ?? []));
+      .then(({ data }) => {
+        const rows = (data ?? []) as Msg[];
+        setMessages(
+          rows.map((r) => ({
+            ...r,
+            verdict: r.role === "agent" ? parseVerdict(r.content) : null,
+          })),
+        );
+      });
   }, [user]);
 
   useEffect(() => {
