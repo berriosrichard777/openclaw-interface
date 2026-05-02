@@ -308,14 +308,26 @@ const Chat = () => {
                 </div>
               )}
               <div className={cn("max-w-[80%] space-y-1", m.role === "operator" && "items-end text-right")}>
-                <p
-                  className={cn(
-                    "font-mono text-[9px] uppercase tracking-widest",
-                    m.role === "operator" ? "text-cyan" : "text-green-neon",
+                <div className={cn("flex items-center gap-1.5", m.role === "operator" && "justify-end")}>
+                  <p
+                    className={cn(
+                      "font-mono text-[9px] uppercase tracking-widest",
+                      m.role === "operator" ? "text-cyan" : "text-green-neon",
+                    )}
+                  >
+                    {m.role === "operator" ? "OPERATOR_01" : "OPENCLAW_AGENT_V2.4"}
+                  </p>
+                  {m.role === "agent" && m.verdict && (
+                    <span
+                      className={cn(
+                        "rounded border px-1.5 py-0 font-mono text-[9px] uppercase tracking-widest",
+                        verdictBadgeClass(m.verdict),
+                      )}
+                    >
+                      {m.verdict}
+                    </span>
                   )}
-                >
-                  {m.role === "operator" ? "OPERATOR_01" : "OPENCLAW_AGENT_V2.4"}
-                </p>
+                </div>
                 <div
                   className={cn(
                     "rounded-lg border px-3 py-2 text-sm whitespace-pre-wrap break-words",
