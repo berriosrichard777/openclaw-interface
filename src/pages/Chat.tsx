@@ -221,6 +221,10 @@ const Chat = () => {
   const send = async (text: string, action?: BridgeAction) => {
     if (!user || !text.trim() || sending) return;
     const cmd = text.trim();
+    if (action === "logs") {
+      setLogsOpen(true);
+      setLogsLastChecked(new Date().toISOString());
+    }
 
     let resolvedAction: BridgeAction | undefined = action;
     let localReply: string | null = null;
