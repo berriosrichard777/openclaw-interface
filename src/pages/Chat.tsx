@@ -191,6 +191,8 @@ const Chat = () => {
     lastChecked: null,
     raw: null,
   });
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [logsLastChecked, setLogsLastChecked] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = "OPENCLAW CONTROL // CHAT";
