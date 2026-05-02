@@ -117,7 +117,7 @@ const parseVerdict = (text: string): Verdict | null => {
 // Map an action to follow-up suggestion commands.
 const SUGGESTION_MAP: Record<string, string[]> = {
   health: ["system", "gateway", "stability"],
-  system: ["health", "logs", "alerts"],
+  system: ["memory", "disk", "uptime"],
   "telegram-status": ["logs", "alerts", "health"],
   logs: ["alerts", "diagnostic", "system"],
   "gateway-status": ["health", "system", "stability"],
@@ -125,6 +125,12 @@ const SUGGESTION_MAP: Record<string, string[]> = {
   diagnostic: ["alerts", "stability", "logs"],
   stability: ["alerts", "logs", "diagnostic"],
   alerts: ["logs", "diagnostic", "stability"],
+  uptime: ["system", "network", "containers"],
+  network: ["ports", "system", "health"],
+  ports: ["network", "containers", "system"],
+  containers: ["ports", "memory", "system"],
+  memory: ["system", "disk", "uptime"],
+  disk: ["system", "memory", "uptime"],
 };
 
 const getSuggestions = (action?: BridgeAction | null): string[] => {
