@@ -203,6 +203,7 @@ const Chat = () => {
       if (error) throw error;
 
       const reply = (data?.reply as string) ?? "(no response)";
+      const verdict = ((data?.verdict as Verdict | null) ?? parseVerdict(reply)) as Verdict | null;
       await supabase.from("chat_messages").insert({
         user_id: user.id,
         role: "agent",
@@ -211,7 +212,7 @@ const Chat = () => {
       });
       setMessages((m) => [
         ...m,
-        { id: crypto.randomUUID(), role: "agent", content: reply, created_at: new Date().toISOString() },
+        { id: crypto.randomUUID(), role: "agent", content: reply, created_at: new Date().toISOString(), verdict },
       ]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "TRANSMIT FAILED";
