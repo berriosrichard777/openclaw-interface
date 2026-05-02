@@ -203,7 +203,7 @@ const Chat = () => {
         });
         setMessages((m) => [
           ...m,
-          { id: crypto.randomUUID(), role: "agent", content: localReply!, created_at: new Date().toISOString() },
+          { id: crypto.randomUUID(), role: "agent", content: localReply!, created_at: new Date().toISOString(), verdict: parseVerdict(localReply!) ?? "Blocked" },
         ]);
         return;
       }
