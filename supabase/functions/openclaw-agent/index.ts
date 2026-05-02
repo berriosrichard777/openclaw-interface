@@ -61,15 +61,6 @@ const FORBIDDEN_PATTERNS: RegExp[] = [
 const isForbidden = (cmd: string): boolean =>
   FORBIDDEN_PATTERNS.some((re) => re.test(cmd));
 
-// Bridge endpoint map. All routes are GET.
-const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic" | "telegram-status">, string> = {
-  "health": "/api/openclaw/health",
-  "system": "/api/openclaw/system",
-  "gateway-status": "/api/openclaw/gateway-status",
-  "status": "/api/openclaw/status",
-  "logs": "/api/openclaw/logs?lines=50",
-};
-
 // Bridge endpoint map. All routes are GET. Read-only diagnostics only.
 const BRIDGE_ROUTES: Record<Exclude<BridgeAction, "diagnostic" | "telegram-status" | "stability" | "alerts">, string> = {
   "health": "/api/openclaw/health",
