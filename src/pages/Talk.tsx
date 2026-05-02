@@ -224,7 +224,7 @@ const Talk = () => {
           </Button>
         </div>
         <p className="mx-auto mt-2 max-w-2xl text-center font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
-          Conversación. Para diagnósticos reales · Command Chat
+          Read-only · Bridge live context · Destructive actions blocked
         </p>
       </div>
     </div>
