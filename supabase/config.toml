@@ -1,1 +1,4 @@
 project_id = "litlbippwbxtaszutjdp"
+
+[functions.richops-chat]
+verify_jwt = false
