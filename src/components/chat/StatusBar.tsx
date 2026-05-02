@@ -9,7 +9,7 @@ export type SystemMetrics = {
   ram: number | null;
   disk: number | null;
   lastChecked: string | null;
-  raw?: Record<string, unknown> | null;
+  raw?: unknown;
 };
 
 const dot = (ok: boolean | null) =>
