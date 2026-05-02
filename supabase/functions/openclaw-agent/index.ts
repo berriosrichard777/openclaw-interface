@@ -45,7 +45,10 @@ const FORBIDDEN_PATTERNS: RegExp[] = [
   /\bedit\s+(config|env|secret|token)\b/i,
   /\bset\s+(token|secret|password|env)\b/i,
   /\b(rotate|revoke)\s+(token|key|secret)\b/i,
-  /\bdocker\b/i, /\bkubectl\b/i, /\bsystemctl\b/i, /\bsudo\b/i,
+  // Block docker write/exec actions but allow read-only NL like "docker ps", "docker status", "running containers".
+  /\bdocker\s+(restart|stop|start|kill|rm|remove|exec|run|build|push|pull|compose|logs|cp|commit|tag|login|logout|system|prune|network|volume|swarm|service|stack|secret|config|container\s+(rm|stop|kill|exec|restart))\b/i,
+  /\bdocker[-_]?compose\b/i,
+  /\bkubectl\b/i, /\bsystemctl\b/i, /\bsudo\b/i,
   /\bshell\b/i, /\bbash\b/i, /\bsh\s+-c\b/i, /\bexec\b/i, /\bspawn\b/i,
   /\bcloudflare\b/i, /\bdns\b/i, /\bfirewall\b/i, /\biptables\b/i,
   /\bcat\s+\/?(etc|root|home|var)\b/i, /\bchmod\b/i, /\bchown\b/i,
