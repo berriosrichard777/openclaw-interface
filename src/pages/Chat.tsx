@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Send, Zap, Bot, User, HeartPulse, Cpu, Radio, Activity } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Send, Zap, Bot, User, HeartPulse, Cpu, Radio, Activity, Bell, FileText, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -8,7 +8,8 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import SystemLogsPanel from "@/components/SystemLogsPanel";
 
-type Msg = { id: string; role: "operator" | "agent"; content: string; created_at: string };
+type Verdict = "OK" | "Warning" | "Critical" | "Blocked";
+type Msg = { id: string; role: "operator" | "agent"; content: string; created_at: string; verdict?: Verdict | null };
 
 type BridgeAction =
   | "logs"
