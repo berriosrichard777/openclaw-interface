@@ -89,7 +89,19 @@ const resolveCommand = (raw: string): ResolvedCommand => {
     return { kind: "action", action: "gateway-status", label: "Gateway Status" };
   if (/\bhealth\b|ping|alive|est[aá]\s+vivo|bridge\s+online|check\s+bridge|revisa\s+health/.test(c))
     return { kind: "action", action: "health", label: "Health Check" };
-  if (/\bsystem\b|cpu|ram|mem(ory)?|disk|recursos|estado\s+del\s+sistema/.test(c))
+  if (/\buptime\b|how\s+long|system\s+running|tiempo\s+activo|cu[aá]ndo\s+inici[oó]|cuando\s+inicio/.test(c))
+    return { kind: "action", action: "uptime", label: "Uptime" };
+  if (/\bnetwork\b|interfaces?|estado\s+de\s+red|conexi[oó]n|ip\s+address|connectivity/.test(c))
+    return { kind: "action", action: "network", label: "Network" };
+  if (/\bports?\b|listening\s+ports|open\s+ports|puertos(\s+abiertos)?/.test(c))
+    return { kind: "action", action: "ports", label: "Ports" };
+  if (/\bcontainers?\b|docker\s+ps|docker\s+status|running\s+containers|contenedores(\s+activos)?/.test(c))
+    return { kind: "action", action: "containers", label: "Containers" };
+  if (/\bmemory\b|memoria|memory\s+usage|ram\s+detalle|uso\s+de\s+memoria/.test(c))
+    return { kind: "action", action: "memory", label: "Memory" };
+  if (/\bdisk\b|disco|disk\s+usage|almacenamiento|espacio\s+en\s+disco/.test(c))
+    return { kind: "action", action: "disk", label: "Disk" };
+  if (/\bsystem\b|cpu|ram|mem(ory)?|recursos|estado\s+del\s+sistema/.test(c))
     return { kind: "action", action: "system", label: "System Status" };
   if (/\bstatus\b|state|report|estado/.test(c))
     return { kind: "action", action: "status", label: "General Status" };
