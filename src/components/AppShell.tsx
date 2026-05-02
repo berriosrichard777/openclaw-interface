@@ -188,7 +188,7 @@ export const AppShell = () => {
         className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
-        <ul className="grid grid-cols-5">
+        <ul className="grid grid-cols-6">
           {tabs.map((t) => (
             <li key={t.to}>
               <NavLink
