@@ -45,7 +45,10 @@ Deno.serve(async (req) => {
       );
     }
 
-    const url = `${base.replace(/\/$/, "")}/api/openclaw/chat`;
+    // Normalize base: strip trailing slash AND any accidental /api/openclaw suffix.
+    const cleanBase = base.replace(/\/$/, "").replace(/\/api\/openclaw$/i, "");
+    const url = `${cleanBase}/api/openclaw/chat`;
+    console.log("[richops-chat] POST", url.replace(/\/\/[^/]+/, "//***"));
     let bridgeResp: Response;
     try {
       bridgeResp = await fetch(url, {
@@ -55,7 +58,7 @@ Deno.serve(async (req) => {
           "Authorization": `Bearer ${token}`,
           "Accept": "application/json",
         },
-        body: JSON.stringify({ message: userMessage, history: messages.slice(-20) }),
+        body: JSON.stringify({ message: userMessage }),
       });
     } catch (e) {
       return new Response(
