@@ -45,9 +45,10 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Normalize base: strip trailing slash AND any accidental /api/openclaw suffix.
-    const cleanBase = base.replace(/\/$/, "").replace(/\/api\/openclaw$/i, "");
-    const url = `${cleanBase}/api/openclaw/chat`;
+    // Force the exact bridge route from the URL origin only.
+    // This prevents bad paths like /api/chat, /chat, or duplicated /api/openclaw.
+    const bridgeOrigin = new URL(base).origin;
+    const url = `${bridgeOrigin}/api/openclaw/chat`;
     console.log("[richops-chat] POST", url.replace(/\/\/[^/]+/, "//***"));
     let bridgeResp: Response;
     try {
