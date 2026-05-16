@@ -71,11 +71,13 @@ Deno.serve(async (req) => {
     let data: any = text;
     try { data = JSON.parse(text); } catch { /* keep raw */ }
 
-    // Success path: bridge returned ok + reply → forward verbatim.
+    console.log("[richops-chat] bridge status:", bridgeResp.status, "ok:", (data as any)?.ok);
+
+    // Success: bridge ok + reply → forward verbatim, always 200.
     if (data && typeof data === "object" && data.ok === true && typeof data.reply === "string") {
       return new Response(
         JSON.stringify({ reply: data.reply, runId: data.runId, sessionKey: data.sessionKey }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
@@ -85,22 +87,19 @@ Deno.serve(async (req) => {
     if (errStr.includes("REQUEST BLOCKED") || statusStr.toLowerCase().includes("blocked")) {
       return new Response(
         JSON.stringify({ reply: REFUSAL, blocked: true }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // Anything else: surface the bridge's own message, never fabricate a block.
+    // Anything else: surface the bridge's message as a normal reply (200) so the UI can render it.
     const fallback =
       (typeof data === "object" && (data?.reply || data?.error || data?.status)) ||
-      (typeof data === "string" ? data : null) ||
+      (typeof data === "string" && data) ||
       `No response from bridge (HTTP ${bridgeResp.status})`;
 
     return new Response(
-      JSON.stringify({ reply: String(fallback) }),
-      {
-        status: bridgeResp.ok ? 200 : 502,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+      JSON.stringify({ reply: `⚠️ Bridge HTTP ${bridgeResp.status}: ${String(fallback)}` }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {
     return new Response(
