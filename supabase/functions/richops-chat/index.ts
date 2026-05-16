@@ -45,10 +45,20 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Force the exact bridge route from the URL origin only.
-    // This prevents bad paths like /api/chat, /chat, or duplicated /api/openclaw.
-    const bridgeOrigin = new URL(base).origin;
-    const url = `${bridgeOrigin}/api/openclaw/chat`;
+    const normalizedBase = base.replace(/\/+$/, "");
+    const parsedBase = new URL(normalizedBase);
+    const basePath = parsedBase.pathname.replace(/\/+$/, "");
+
+    if (basePath) {
+      return new Response(
+        JSON.stringify({
+          error: "Bridge misconfigured: OPENCLAW_BRIDGE_URL must be the bridge base URL only.",
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    const url = `${normalizedBase}/api/openclaw/chat`;
     console.log("[richops-chat] POST", url.replace(/\/\/[^/]+/, "//***"));
     let bridgeResp: Response;
     try {
